@@ -307,7 +307,16 @@ def _normalize_flux_dataframe(df: object, timezone: str, pivot: bool = True) -> 
     if df.empty:
         return df
     if pivot and "_field" in df.columns and "_value" in df.columns:
-        df = df.pivot_table(index="_time", columns="_field", values="_value", aggfunc="first").reset_index()
+        index_cols = [c for c in df.columns if c not in {"_field", "_value"}]
+        if "_time" in index_cols:
+            df = df.pivot_table(
+                index=index_cols,
+                columns="_field",
+                values="_value",
+                aggfunc="first",
+            ).reset_index()
+            if hasattr(df.columns, "name"):
+                df.columns.name = None
     if "_time" in df.columns:
         df = df.rename(columns={"_time": "time"})
     if "time" in df.columns:

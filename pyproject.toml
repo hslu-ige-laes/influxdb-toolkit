@@ -37,10 +37,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tolipp/influxdb"
-Repository = "https://github.com/tolipp/influxdb"
-Issues = "https://github.com/tolipp/influxdb/issues"
-Changelog = "https://github.com/tolipp/influxdb/blob/main/influxdb-toolkit/CHANGELOG.md"
+Homepage = "https://github.com/hslu-ige-laes/influxdb-toolkit"
+Repository = "https://github.com/hslu-ige-laes/influxdb-toolkit"
+Issues = "https://github.com/hslu-ige-laes/influxdb-toolkit/issues"
+Changelog = "https://github.com/hslu-ige-laes/influxdb-toolkit/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [

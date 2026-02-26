@@ -83,6 +83,24 @@ def test_normalize_flux_dataframe_pivots_to_wide() -> None:
     assert len(out) == 1
 
 
+def test_normalize_flux_dataframe_preserves_series_dimensions() -> None:
+    t = pd.Timestamp("2026-02-01T00:00:00Z")
+    df = pd.DataFrame(
+        {
+            "_time": [t, t],
+            "_field": ["temperature", "temperature"],
+            "_value": [22.4, 19.8],
+            "sensor": ["A", "B"],
+        }
+    )
+    out = _normalize_flux_dataframe(df, timezone="UTC", pivot=True)
+
+    assert "sensor" in out.columns
+    assert "temperature" in out.columns
+    assert len(out) == 2
+    assert set(out["sensor"]) == {"A", "B"}
+
+
 def test_influxql_result_to_df_includes_tags() -> None:
     result = {
         "results": [
