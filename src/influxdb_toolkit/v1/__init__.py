@@ -1,0 +1,1 @@
+"""Versioned client namespaces."""

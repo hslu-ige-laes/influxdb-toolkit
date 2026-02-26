@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "influxdb-toolkit"
+version = "0.1.0"
+description = "Unified Python API for InfluxDB v1 and v2 with extension points for v3."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  {name = "HSLU", email = "research-engineering@hslu.ch"},
+]
+keywords = ["influxdb", "timeseries", "influxql", "flux"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Database",
+  "Topic :: Scientific/Engineering",
+]
+dependencies = [
+  "pandas>=2.0.0",
+  "python-dotenv>=1.0.0",
+  "requests>=2.31.0",
+  "influxdb>=5.3.1",
+  "influxdb-client>=1.41.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/tolipp/influxdb"
+Repository = "https://github.com/tolipp/influxdb"
+Issues = "https://github.com/tolipp/influxdb/issues"
+Changelog = "https://github.com/tolipp/influxdb/blob/main/influxdb-toolkit/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-cov>=5.0.0",
+]
+release = [
+  "build>=1.2.2",
+  "twine>=5.1.1",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q -p no:cacheprovider"

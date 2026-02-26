@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+.uv/
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Env
+.env
+
+# OS
+.DS_Store
+Thumbs.db
