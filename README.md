@@ -1,33 +1,20 @@
 # influxdb-toolkit
 
-Unified Python API for InfluxDB v1 and v2 with extension points for v3.
-
-Key goals:
-- Consistent read/query/exploration API across v1 (InfluxQL) and v2 (Flux).
-- Safe-by-default operations: write/delete/admin require explicit enablement.
-- Clean boundaries for future v3 support.
+Python package for querying InfluxDB v1 (InfluxQL) and v2 (Flux) with one consistent API.
 
 ## Install
 
 ```bash
-pip install influxdb-toolkit
+python -m pip install influxdb-toolkit
 ```
 
-For local development:
+For local repo usage:
 
 ```bash
-pip install -e .
+python -m pip install -e .
 ```
 
-On Windows, prefer:
-
-```powershell
-py -m pip install -e .
-```
-
-## Quickstart
-
-### Auto-detect version (recommended)
+## 1-Minute Query (Auto-detect v1/v2)
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -48,11 +35,14 @@ with InfluxDBClientFactory.get_client(config=config) as client:
         end=datetime.now(UTC),
         interval="5m",
         aggregation="mean",
+        timezone="UTC",
     )
     print(df.head())
 ```
 
-### Explicit v1 example
+## Copy/Paste Templates
+
+### V1 only
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -71,140 +61,172 @@ with InfluxDBClientFactory.get_client(version=1, config=config) as client:
     df = client.get_timeseries(
         measurement="temperature",
         fields=["value"],
-        start=datetime.now(UTC) - timedelta(hours=1),
+        start=datetime.now(UTC) - timedelta(hours=24),
         end=datetime.now(UTC),
+        tags={"site": "A1"},
+        interval="5m",
+        aggregation="mean",
     )
+    print(df.head())
 ```
 
-The factory determines runtime version from input keys:
+### V2 only
+
+```python
+from datetime import UTC, datetime, timedelta
+from influxdb_toolkit import InfluxDBClientFactory
+
+config = {
+    "url": "http://localhost:8086",
+    "token": "my-token",
+    "org": "my-org",
+    "bucket": "my-bucket",
+}
+
+with InfluxDBClientFactory.get_client(version=2, config=config) as client:
+    df = client.get_timeseries(
+        measurement="temperature",
+        fields=["value"],
+        start=datetime.now(UTC) - timedelta(hours=24),
+        end=datetime.now(UTC),
+        tags={"site": "A1"},
+        interval="5m",
+        aggregation="mean",
+    )
+    print(df.head())
+```
+
+### Auto-detect (single script for mixed environments)
+
+```python
+from datetime import UTC, datetime, timedelta
+from influxdb_toolkit import InfluxDBClientFactory
+
+# Use either v1 keys OR v2 keys.
+config = {
+    "url": "http://localhost:8086",
+    "token": "my-token",
+    "org": "my-org",
+    "bucket": "my-bucket",
+}
+
+with InfluxDBClientFactory.get_client(config=config) as client:
+    df = client.get_multiple_timeseries(
+        queries=[
+            {"measurement": "temperature", "fields": ["value"], "tags": {"site": "A1"}},
+            {"measurement": "pressure", "fields": ["value"], "tags": {"site": "A1"}},
+        ],
+        start=datetime.now(UTC) - timedelta(hours=24),
+        end=datetime.now(UTC),
+        interval="10m",
+        aggregation="mean",
+    )
+    print(df.head())
+```
+
+## Common Query Tasks
+
+### Query one metric
+
+```python
+df = client.get_timeseries(
+    measurement="temperature",
+    fields=["value"],
+    start=start,
+    end=end,
+    tags={"site": "A1"},
+    interval="5m",
+    aggregation="mean",
+)
+```
+
+### Query multiple metrics together
+
+```python
+df = client.get_multiple_timeseries(
+    queries=[
+        {"measurement": "temperature", "fields": ["value"], "tags": {"site": "A1"}},
+        {"measurement": "pressure", "fields": ["value"], "tags": {"site": "A1"}},
+    ],
+    start=start,
+    end=end,
+    interval="10m",
+    aggregation="mean",
+)
+```
+
+### Run raw query text
+
+V1 InfluxQL:
+
+```python
+df = client.query_raw(
+    'SELECT mean("value") FROM "temperature" WHERE time >= now() - 24h GROUP BY time(5m)',
+    timezone="UTC",
+)
+```
+
+V2 Flux:
+
+```python
+flux = '''
+from(bucket: "my-bucket")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "temperature")
+  |> filter(fn: (r) => r._field == "value")
+  |> aggregateWindow(every: 5m, fn: mean)
+'''
+df = client.query_raw(flux, timezone="UTC")
+```
+
+### Explore schema before querying
+
+```python
+measurements = client.list_measurements()
+tag_keys = client.get_tags("temperature")
+tag_values = client.get_tag_values("temperature", "site")
+fields = client.get_fields("temperature")
+```
+
+## Full Query API
+
+- `get_timeseries`
+- `get_multiple_timeseries`
+- `query_raw`
+- `get_results_from_qry` (alias to `query_raw`)
+- `list_measurements`
+- `get_tags`
+- `get_tag_values`
+- `get_fields`
+- `list_databases` (v1)
+- `list_buckets` (v2)
+
+## Config Rules
+
+Factory version detection:
 - v1 keys: `host`, `database`, `username/password` (or `user/pwd`)
 - v2 keys: `url`, `token`, `org`
 
-If both sets are present, the factory raises `Ambiguous config`.
-
-## Configuration
-
-Environment variables are supported (see `.env.example`). Explicit kwargs override env values.
-
-## API Overview
-
-Core client methods:
-- Query: `get_timeseries`, `query_raw`, `get_multiple_timeseries`
-- Exploration: `list_measurements`, `get_tags`, `get_tag_values`, `get_fields`, `list_databases` (v1), `list_buckets` (v2)
-- Write/admin (guarded): `write_points`, `write_dataframe`, `delete_range`, `create_database`, `create_bucket`, `create_user`, `grant_privileges`
+Environment variables are supported via `.env.example`.
 
 ## Safety
 
-Write/delete/admin operations are disabled by default. To enable, set:
+Write/delete/admin operations are disabled by default.
+
+Enable only if needed:
 
 ```bash
-INFLUXDB_ALLOW_WRITE=true
+set INFLUXDB_ALLOW_WRITE=true
 ```
 
-Or pass `allow_write=True` in config.
+## Developer Docs
 
-Write APIs accept optional `batch_size` for chunked writes:
-
-```python
-result = client.write_points(points, measurement="m", batch_size=5000)
-```
-
-## Use Cases
-
-- Unified dashboards and scripts that need to run against both v1 and v2 backends.
-- Schema exploration before migration or data quality checks.
-- Read-only smoke checks for multiple named environments.
-
-## Docs
-
-- `docs/architecture_concept.md`
+If you are maintaining/extending the package:
 - `docs/usage_setup.md`
-- `docs/influxdb_v1_vs_v2_overview.md`
-- `docs/internal_package_inventory.md`
-- `docs/data_structure_analysis.md`
-- `docs/python_package_comparison.md`
-- `docs/auth_config_comparison.md`
-- `docs/week_status.md`
-
-## Development
-
-```bash
-pip install -e .[dev]
-pytest
-```
-
-## Run Locally
-
-`influxdb-toolkit` is a Python library, not a web server.
-
-### 1) Install + tests
-
-```powershell
-cd C:\path\to\influxdb\influxdb-toolkit
-py -m pip install -e .[dev]
-py -m pytest -q -o cache_dir="$env:USERPROFILE\.pytest_cache_influxdb_toolkit"
-```
-
-### 2) Read-only smoke test against configured InfluxDB
-
-```powershell
-py scripts/smoke_read.py --version 1
-py scripts/smoke_read.py --version 2
-```
-
-### 3) Use named connection profiles
-
-```powershell
-py scripts/smoke_read.py --list-profiles
-py scripts/smoke_read.py --profile v1_flimatec
-py scripts/smoke_read.py --profile v2_meteo
-```
-
-### 4) Re-generate schema analysis
-
-```powershell
-py scripts/schema_report.py --list-profiles
-py scripts/schema_report.py --profile v1_flimatec --profile v2_meteo
-py scripts/schema_report.py
-```
-
-## PyPI Release and Cross-PC Verification
-
-1. Build artifacts:
-
-```powershell
-py -m pip install -e .[release]
-py -m build
-$files = Get-ChildItem dist\\* | Select-Object -ExpandProperty FullName
-py -m twine check $files
-```
-
-2. Publish to TestPyPI first:
-
-```powershell
-py -m twine upload --repository testpypi dist/*
-```
-
-3. Verify on a clean PC/venv:
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-py -m pip install -i https://test.pypi.org/simple/ influxdb-toolkit
-```
-
-4. Smoke check on the new machine:
-- Copy `.env.example` to `.env` and set credentials.
-- Run `py scripts/smoke_read.py --list-profiles` from repo checkout, or run your own short import script with `InfluxDBClientFactory`.
-
-5. Publish to PyPI when TestPyPI validation passes.
-
-## Contributing
-
-See `CONTRIBUTING.md` for coding/testing conventions and release expectations.
+- `docs/architecture_concept.md`
+- `CONTRIBUTING.md`
+- `RELEASE.md`
 
 ## License
 
-MIT License. See `LICENSE`.
-
-
+MIT. See `LICENSE`.
