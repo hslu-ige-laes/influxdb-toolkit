@@ -111,6 +111,49 @@ def test_base_unsupported_methods_and_write_guard() -> None:
         client.write_points([{"fields": {"v": 1}}], measurement="m")
 
 
+def test_get_schema_returns_flat_dataframe() -> None:
+    client = RichDummyClient(config={"database": "testdb"})
+    df = client.get_schema()
+    assert list(df.columns) == ["measurement", "field", "type", "tags"]
+    assert len(df) == 1
+    assert df.iloc[0]["measurement"] == "m"
+    assert df.iloc[0]["field"] == "value"
+    assert df.iloc[0]["type"] == "float"
+    assert df.iloc[0]["tags"] == "sensor, site"
+
+
+class MultiMeasurementClient(RichDummyClient):
+    def list_measurements(self, database=None):
+        return ["temp", "humidity"]
+
+    def get_tags(self, measurement, database=None):
+        return {"temp": ["location"], "humidity": ["location", "floor"]}[measurement]
+
+    def get_fields(self, measurement, database=None):
+        return {
+            "temp": {"value": "float", "raw": "integer"},
+            "humidity": {"rh": "float"},
+        }[measurement]
+
+
+def test_get_schema_multiple_measurements() -> None:
+    client = MultiMeasurementClient()
+    df = client.get_schema()
+    assert len(df) == 3
+    assert df[df["measurement"] == "temp"]["field"].tolist() == ["value", "raw"]
+    assert df[df["measurement"] == "humidity"].iloc[0]["tags"] == "location, floor"
+
+
+def test_get_schema_empty_database() -> None:
+    class EmptyClient(RichDummyClient):
+        def list_measurements(self, database=None):
+            return []
+
+    df = EmptyClient().get_schema()
+    assert df.empty
+    assert list(df.columns) == ["measurement", "field", "type", "tags"]
+
+
 def test_repr_exposes_state_and_write_mode() -> None:
     client = RichDummyClient(allow_write=True)
     assert "disconnected" in repr(client)

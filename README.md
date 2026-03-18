@@ -222,6 +222,25 @@ tag_values = client.get_tag_values("temperature", "site")
 fields = client.get_fields("temperature")
 ```
 
+### Get full database schema as DataFrame
+
+```python
+df_schema = client.get_schema()
+print(df_schema)
+#   measurement    field     type          tags
+#   temperature    value    float  site, sensor
+#   humidity       rh       float  site, floor
+
+# Filter by measurement
+df_schema[df_schema["measurement"] == "temperature"]
+
+# Filter by field type
+df_schema[df_schema["type"] == "float"]
+
+# List all unique measurements
+df_schema["measurement"].unique()
+```
+
 ## Full Query API
 
 - `get_timeseries`
@@ -232,6 +251,7 @@ fields = client.get_fields("temperature")
 - `get_tags`
 - `get_tag_values`
 - `get_fields`
+- `get_schema`
 - `list_databases` (v1)
 - `list_buckets` (v2)
 

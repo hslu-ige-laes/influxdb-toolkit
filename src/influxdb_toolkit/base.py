@@ -148,6 +148,25 @@ class InfluxDBClientBase(ABC):
             database=db_name,
         )
 
+    def get_schema(self, database: Optional[str] = None) -> pd.DataFrame:
+        """Return a DataFrame with all measurements, their fields, types, and tags.
+
+        Columns: measurement, field, type, tags
+        """
+        measurements = self.list_measurements(database=database)
+        rows = []
+        for m in measurements:
+            tags = self.get_tags(m, database=database)
+            fields = self.get_fields(m, database=database)
+            for field_name, field_type in fields.items():
+                rows.append({
+                    "measurement": m,
+                    "field": field_name,
+                    "type": field_type,
+                    "tags": ", ".join(tags),
+                })
+        return pd.DataFrame(rows, columns=["measurement", "field", "type", "tags"])
+
     def list_databases(self) -> List[str]:
         raise UnsupportedOperationError("list_databases is only supported for InfluxDB v1")
 

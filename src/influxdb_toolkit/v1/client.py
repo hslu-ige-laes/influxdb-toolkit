@@ -57,14 +57,87 @@ class InfluxDBClientV1(InfluxDBClientBase):
         self._database = database
 
     def connect(self) -> None:
+        import urllib.request
+        import ssl
+
+        host = self.config.get("host", "")
+        port = self.config.get("port", 8086)
+        # Handle case where host already includes scheme (e.g. from ChronografProxyClient)
+        if host.startswith("https://") or host.startswith("http://"):
+            base_url = f"{host.rstrip('/')}:{port}" if f":{port}" not in host else host.rstrip("/")
+        else:
+            scheme = "https" if self.config.get("ssl") else "http"
+            base_url = f"{scheme}://{host}:{port}"
+
+        # Step 1: DNS / network reachability
+        logger.info("Step 1/3: Testing network reachability → %s", base_url)
+        try:
+            ctx = ssl.create_default_context()
+            if not self.config.get("verify_ssl", False):
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+            req = urllib.request.Request(f"{base_url}/ping", method="GET")
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+                status = resp.status
+            logger.info("  /ping HTTP %s – server reachable", status)
+        except Exception as exc:
+            self.connected = False
+            raise InfluxDBConnectionError(
+                f"Network/DNS error: cannot reach {base_url}/ping – {exc}"
+            ) from exc
+
+        # Step 2: Ping via client library
+        logger.info("Step 2/3: Ping via InfluxDB client library")
         try:
             ok = self.ping()
             if not ok:
-                raise InfluxDBConnectionError("Ping failed")
-            self.connected = True
+                raise InfluxDBConnectionError(
+                    "Client ping returned False. Server reachable but client handshake failed."
+                )
+            logger.info("  Client ping OK")
+        except InfluxDBConnectionError:
+            self.connected = False
+            raise
         except Exception as exc:
             self.connected = False
-            raise InfluxDBConnectionError(str(exc)) from exc
+            raise InfluxDBConnectionError(f"Client ping error: {exc}") from exc
+
+        # Step 3: Verify credentials & database access
+        logger.info("Step 3/3: Verifying database access → '%s'", self._database)
+        try:
+            dbs = self._client.get_list_database()
+            db_names = [d.get("name") for d in dbs]
+            logger.info("  Accessible databases: %s", db_names)
+            if self._database and self._database not in db_names:
+                raise InfluxDBConnectionError(
+                    f"Database '{self._database}' not found. "
+                    f"Available: {db_names}. "
+                    f"Check database name or credentials (user may lack access)."
+                )
+            logger.info("  Database '%s' confirmed accessible", self._database)
+        except InfluxDBConnectionError:
+            self.connected = False
+            raise
+        except Exception as exc:
+            self.connected = False
+            err_msg = str(exc)
+            if "Expecting value" in err_msg or "JSONDecode" in type(exc).__name__:
+                hint = (
+                    f"Server returned empty/HTML response for SHOW DATABASES. "
+                    f"This usually means authentication is required or a reverse proxy "
+                    f"(e.g. Chronograf) is intercepting API requests. "
+                    f"Username provided: {'yes' if self.config.get('username') else 'NO'}, "
+                    f"Password provided: {'yes' if self.config.get('password') else 'NO'}. "
+                    f"If using Chronograf, use ChronografProxyClient instead."
+                )
+            else:
+                hint = f"Error: {exc}"
+            raise InfluxDBConnectionError(
+                f"Credential/database check failed: {hint}"
+            ) from exc
+
+        self.connected = True
+        logger.info("Connection established successfully.")
 
     def close(self) -> None:
         if hasattr(self._client, "close"):
@@ -74,9 +147,17 @@ class InfluxDBClientV1(InfluxDBClientBase):
     def ping(self) -> bool:
         try:
             if hasattr(self._client, "ping"):
-                self._client.ping()
+                version = self._client.ping()
+                logger.debug("  ping response: %s", version)
             return True
-        except Exception:
+        except Exception as exc:
+            # Some reverse proxies (e.g. Chronograf) return 200 instead of 204
+            # for /ping. The influxdb library treats 200 as an error.
+            err_msg = str(exc)
+            if "200" in err_msg:
+                logger.debug("  ping returned 200 (proxy) – treating as OK")
+                return True
+            logger.warning("  ping failed: %s: %s", type(exc).__name__, exc)
             return False
 
     def get_timeseries(
@@ -113,7 +194,7 @@ class InfluxDBClientV1(InfluxDBClientBase):
         if df.empty:
             return df
         if "time" in df.columns:
-            df["time"] = pd.to_datetime(df["time"], utc=True)
+            df["time"] = _parse_time_column(df["time"])
             if timezone and timezone.upper() != "UTC":
                 df["time"] = df["time"].dt.tz_convert(timezone)
                 df["time"] = df["time"].dt.tz_localize(None)
@@ -126,7 +207,7 @@ class InfluxDBClientV1(InfluxDBClientBase):
             result = self._client.query(qry)
             df = pd.DataFrame(result.get_points())
             if "time" in df.columns:
-                df["time"] = pd.to_datetime(df["time"], utc=True)
+                df["time"] = _parse_time_column(df["time"])
                 if timezone and timezone.upper() != "UTC":
                     df["time"] = df["time"].dt.tz_convert(timezone)
                     df["time"] = df["time"].dt.tz_localize(None)
@@ -262,6 +343,33 @@ class InfluxDBClientV1(InfluxDBClientBase):
         # qry = f'GRANT ALL ON "{database}" TO "{user}"'
         # self._client.query(qry)
         raise UnsupportedOperationError("grant_privileges is disabled until admin ops are approved")
+
+
+def _parse_time_column(series: pd.Series) -> pd.Series:
+    """Parse a time column that may contain ISO strings or integer timestamps.
+
+    Auto-detects the unit by inspecting the magnitude of the first value:
+      - > 1e18  → nanoseconds
+      - > 1e15  → microseconds
+      - > 1e12  → milliseconds
+      - otherwise → seconds
+    """
+    import numpy as np
+    sample = series.dropna().iloc[0] if not series.dropna().empty else None
+    logger.debug("_parse_time_column: sample=%r, type=%s", sample, type(sample).__name__)
+    if sample is not None and isinstance(sample, (int, float, np.integer, np.floating)):
+        abs_val = abs(float(sample))
+        if abs_val > 1e18:
+            unit = "ns"
+        elif abs_val > 1e15:
+            unit = "us"
+        elif abs_val > 1e12:
+            unit = "ms"
+        else:
+            unit = "s"
+        logger.debug("_parse_time_column: abs_val=%.0f → unit=%s", abs_val, unit)
+        return pd.to_datetime(series, unit=unit, utc=True)
+    return pd.to_datetime(series, utc=True)
 
 
 def _move_time_first(df: pd.DataFrame) -> pd.DataFrame:
