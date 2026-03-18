@@ -222,6 +222,47 @@ tag_values = client.get_tag_values("temperature", "site")
 fields = client.get_fields("temperature")
 ```
 
+### List all series (measurement + tag combinations)
+
+```python
+# All series across all measurements
+df_series = client.get_all_series()
+print(df_series)
+#   measurement  device_id  sensor  site
+#   temperature  dev_01     temp    A1
+#   temperature  dev_01     hum     A1
+#   humidity     dev_02     rh      B2
+
+# Series for a single measurement
+df_series = client.get_series(measurement="temperature")
+```
+
+### Get actual fields per series (non-null detection)
+
+```python
+# Which fields actually have data for each tag combination?
+df_fields = client.get_fields_per_series(
+    ignore_fields={"rssi_dBm_abs", "snr_dB_abs"},  # optional
+)
+print(df_fields)
+#   measurement  device_id  sensor  fields                    n_fields
+#   temperature  dev_01     temp    value, raw                2
+#   humidity     dev_02     rh      rh                        1
+```
+
+### Query multiple series with short column names
+
+```python
+df = client.get_multiple_timeseries(
+    queries=[
+        {"measurement": "m", "fields": ["value"], "tags": {"sensor": "temp"}},
+        {"measurement": "m", "fields": ["value"], "tags": {"sensor": "hum"}},
+    ],
+    start=start, end=end,
+    short_names=True,  # columns: "value", "value_2" instead of full prefix
+)
+```
+
 ### Get full database schema as DataFrame
 
 ```python
@@ -251,6 +292,9 @@ df_schema["measurement"].unique()
 - `get_tags`
 - `get_tag_values`
 - `get_fields`
+- `get_series`
+- `get_all_series`
+- `get_fields_per_series`
 - `get_schema`
 - `list_databases` (v1)
 - `list_buckets` (v2)

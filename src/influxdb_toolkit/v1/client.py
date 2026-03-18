@@ -171,6 +171,42 @@ class InfluxDBClientV1(InfluxDBClientBase):
         aggregation: Optional[str] = None,
         timezone: str = "UTC",
     ) -> pd.DataFrame:
+        """Fetch time series data as a DataFrame.
+
+        Parameters
+        ----------
+        measurement : str
+            Name of the measurement (e.g. ``"temperature"``).
+        fields : Iterable[str]
+            Field keys to retrieve (e.g. ``["value", "humidity"]``).
+        start, end : datetime
+            Time range (inclusive start, exclusive end). Timezone-aware recommended.
+        tags : dict, optional
+            Tag filters (e.g. ``{"device_id": "abc", "sensor": "temp"}``).
+        interval : str, optional
+            Aggregation window (e.g. ``"5m"``, ``"1h"``, ``"1d"``).
+            Required when *aggregation* is set.
+        aggregation : str, optional
+            Aggregation function. Common values:
+
+            - ``"mean"`` – arithmetic mean
+            - ``"median"`` – median value
+            - ``"sum"`` – sum of values
+            - ``"count"`` – number of points
+            - ``"min"`` / ``"max"`` – minimum / maximum
+            - ``"first"`` / ``"last"`` – first / last point in window
+            - ``"spread"`` – difference between min and max
+            - ``"stddev"`` – standard deviation
+
+            Must be used together with *interval*.
+        timezone : str
+            Output timezone (default ``"UTC"``). E.g. ``"Europe/Zurich"``.
+
+        Returns
+        -------
+        pd.DataFrame
+            Columns: ``time``, plus one column per field.
+        """
         fields_list = [f for f in list(fields) if f]
         if not fields_list:
             raise ValueError("fields must contain at least one field name")
@@ -216,6 +252,34 @@ class InfluxDBClientV1(InfluxDBClientBase):
         except Exception as exc:
             raise InfluxDBQueryError(str(exc)) from exc
 
+    def get_series(
+        self,
+        measurement: Optional[str] = None,
+        database: Optional[str] = None,
+    ) -> pd.DataFrame:
+        if measurement:
+            qry = f'SHOW SERIES FROM "{measurement}"'
+        else:
+            qry = "SHOW SERIES"
+        try:
+            result = self._client.query(qry, database=database or self._database)
+            df_raw = pd.DataFrame(result.get_points())
+        except Exception as exc:
+            raise InfluxDBQueryError(str(exc)) from exc
+        if df_raw.empty:
+            return pd.DataFrame(columns=["measurement"])
+        rows = []
+        for _, row in df_raw.iterrows():
+            key_str = row.get("key", "")
+            parts = key_str.split(",")
+            entry: Dict[str, str] = {"measurement": parts[0]}
+            for part in parts[1:]:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    entry[k] = v
+            rows.append(entry)
+        return pd.DataFrame(rows)
+
     def list_measurements(self, database: Optional[str] = None) -> List[str]:
         if database and database != self._database:
             qry = f'SHOW MEASUREMENTS ON "{database}"'
@@ -250,6 +314,58 @@ class InfluxDBClientV1(InfluxDBClientBase):
         result = self._client.query(qry)
         points = list(result.get_points())
         return {p.get("fieldKey"): p.get("fieldType") for p in points if "fieldKey" in p}
+
+    def get_schema(self, database: Optional[str] = None) -> pd.DataFrame:
+        """Optimized: uses bulk SHOW TAG KEYS / SHOW FIELD KEYS (2 queries total)."""
+        db = database or self._database
+        try:
+            # Bulk field keys: returns measurement + fieldKey + fieldType
+            fk_result = self._client.query('SHOW FIELD KEYS', database=db)
+            # Bulk tag keys: returns measurement + tagKey
+            tk_result = self._client.query('SHOW TAG KEYS', database=db)
+        except Exception as exc:
+            raise InfluxDBQueryError(str(exc)) from exc
+
+        # Extract series list from ResultSet (works with both standard influxdb
+        # library ResultSet (.raw) and ChronografProxyClient _ResultSet (._raw))
+        def _get_series(result_set: object) -> list:
+            raw = getattr(result_set, "raw", None) or getattr(result_set, "_raw", {})
+            # Standard: {"series": [...]}  /  Chronograf proxy: {"results": [{"series": [...]}]}
+            if "series" in raw:
+                return raw["series"]
+            for r in raw.get("results", []):
+                if "series" in r:
+                    return r["series"]
+            return []
+
+        # Build tag lookup: measurement → sorted tag list
+        tags_by_m: Dict[str, List[str]] = {}
+        for series in _get_series(tk_result):
+            m_name = series.get("name", "")
+            cols = series.get("columns", [])
+            for vals in series.get("values", []):
+                row = dict(zip(cols, vals))
+                tag = row.get("tagKey", "")
+                if tag:
+                    tags_by_m.setdefault(m_name, []).append(tag)
+        for k in tags_by_m:
+            tags_by_m[k] = sorted(set(tags_by_m[k]))
+
+        # Build rows from field keys
+        rows = []
+        for series in _get_series(fk_result):
+            m_name = series.get("name", "")
+            cols = series.get("columns", [])
+            tag_str = ", ".join(tags_by_m.get(m_name, []))
+            for vals in series.get("values", []):
+                row = dict(zip(cols, vals))
+                rows.append({
+                    "measurement": m_name,
+                    "field": row.get("fieldKey", ""),
+                    "type": row.get("fieldType", ""),
+                    "tags": tag_str,
+                })
+        return pd.DataFrame(rows, columns=["measurement", "field", "type", "tags"])
 
     def list_databases(self) -> List[str]:
         dbs = self._client.get_list_database()

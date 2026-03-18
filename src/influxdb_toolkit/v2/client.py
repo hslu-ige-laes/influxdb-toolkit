@@ -113,6 +113,67 @@ class InfluxDBClientV2(InfluxDBClientBase):
             raise InfluxDBQueryError(str(exc)) from exc
         return _normalize_flux_dataframe(df, timezone)
 
+    def get_series(
+        self,
+        measurement: Optional[str] = None,
+        database: Optional[str] = None,
+    ) -> pd.DataFrame:
+        bucket = database or self._bucket
+        if not bucket:
+            raise ValueError("bucket is required for v2 queries")
+        # Use InfluxQL compatibility: SHOW SERIES works on v2 via /query endpoint
+        if measurement:
+            qry = f'SHOW SERIES FROM "{measurement}"'
+        else:
+            qry = "SHOW SERIES"
+        try:
+            df_raw = self._execute_influxql_compat(qry, timezone="")
+        except Exception:
+            # Fallback: build series from tag exploration
+            return self._get_series_via_tags(measurement, bucket)
+        if df_raw.empty:
+            return pd.DataFrame(columns=["measurement"])
+        rows: List[Dict[str, str]] = []
+        col = "key" if "key" in df_raw.columns else df_raw.columns[0]
+        for key_str in df_raw[col]:
+            parts = str(key_str).split(",")
+            entry: Dict[str, str] = {"measurement": parts[0]}
+            for part in parts[1:]:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    entry[k] = v
+            rows.append(entry)
+        return pd.DataFrame(rows)
+
+    def _get_series_via_tags(
+        self, measurement: Optional[str], bucket: str
+    ) -> pd.DataFrame:
+        """Fallback: build series from tag keys/values when SHOW SERIES is unavailable."""
+        measurements = [measurement] if measurement else self.list_measurements(database=bucket)
+        all_rows: List[Dict[str, str]] = []
+        for m in measurements:
+            tags = self.get_tags(m, database=bucket)
+            if not tags:
+                all_rows.append({"measurement": m})
+                continue
+            # Get all tag values and build combinations
+            tag_values: Dict[str, List[str]] = {}
+            for t in tags:
+                tag_values[t] = self.get_tag_values(m, t, database=bucket)
+            # Build cartesian product of tag values
+            import itertools
+            keys = list(tag_values.keys())
+            value_lists = [tag_values[k] or [""] for k in keys]
+            for combo in itertools.product(*value_lists):
+                entry: Dict[str, str] = {"measurement": m}
+                for k, v in zip(keys, combo):
+                    if v:
+                        entry[k] = v
+                all_rows.append(entry)
+        if not all_rows:
+            return pd.DataFrame(columns=["measurement"])
+        return pd.DataFrame(all_rows)
+
     def list_measurements(self, database: Optional[str] = None) -> List[str]:
         bucket = database or self._bucket
         if not bucket:
@@ -173,6 +234,78 @@ schema.fieldKeys(
         df = self._client.query_api().query_data_frame(query, org=self._org)
         df = _normalize_flux_dataframe(df, "UTC", pivot=False)
         return {v: "" for v in sorted({v for v in df.get("_value", []) if isinstance(v, str)})}
+
+    def get_schema(self, database: Optional[str] = None) -> pd.DataFrame:
+        """Optimized: uses bulk Flux schema queries (2 queries total)."""
+        bucket = database or self._bucket
+        if not bucket:
+            raise ValueError("bucket is required for v2 queries")
+        try:
+            # Bulk field keys with measurement info
+            fk_query = f'''
+import "influxdata/influxdb/schema"
+schema.fieldKeys(bucket: "{bucket}")
+'''
+            df_fields = self._client.query_api().query_data_frame(fk_query, org=self._org)
+            df_fields = _normalize_flux_dataframe(df_fields, "UTC", pivot=False)
+
+            # Bulk tag keys with measurement info
+            tk_query = f'''
+import "influxdata/influxdb/schema"
+schema.tagKeys(bucket: "{bucket}")
+'''
+            df_tags = self._client.query_api().query_data_frame(tk_query, org=self._org)
+            df_tags = _normalize_flux_dataframe(df_tags, "UTC", pivot=False)
+        except Exception as exc:
+            raise InfluxDBQueryError(str(exc)) from exc
+
+        # Build tag lookup: measurement → sorted tag list
+        tags_by_m: Dict[str, List[str]] = {}
+        if not df_tags.empty:
+            m_col = "_measurement" if "_measurement" in df_tags.columns else None
+            v_col = "_value" if "_value" in df_tags.columns else None
+            if m_col and v_col:
+                for _, row in df_tags.iterrows():
+                    m_name = row[m_col]
+                    tag = row[v_col]
+                    if isinstance(tag, str) and tag not in {"_start", "_stop", "_measurement"}:
+                        tags_by_m.setdefault(m_name, []).append(tag)
+            elif v_col:
+                # No measurement column: tags apply globally
+                all_tags = sorted({
+                    v for v in df_tags[v_col]
+                    if isinstance(v, str) and v not in {"_start", "_stop", "_measurement"}
+                })
+                # Will apply to all measurements
+                tags_by_m["_all_"] = all_tags
+        for k in tags_by_m:
+            tags_by_m[k] = sorted(set(tags_by_m[k]))
+
+        # Build rows from field keys
+        rows = []
+        if not df_fields.empty:
+            m_col = "_measurement" if "_measurement" in df_fields.columns else None
+            v_col = "_value" if "_value" in df_fields.columns else None
+            if m_col and v_col:
+                for _, row in df_fields.iterrows():
+                    m_name = row[m_col]
+                    tag_list = tags_by_m.get(m_name, tags_by_m.get("_all_", []))
+                    rows.append({
+                        "measurement": m_name,
+                        "field": row[v_col],
+                        "type": "",
+                        "tags": ", ".join(tag_list),
+                    })
+            elif v_col:
+                for _, row in df_fields.iterrows():
+                    tag_list = tags_by_m.get("_all_", [])
+                    rows.append({
+                        "measurement": "",
+                        "field": row[v_col],
+                        "type": "",
+                        "tags": ", ".join(tag_list),
+                    })
+        return pd.DataFrame(rows, columns=["measurement", "field", "type", "tags"])
 
     def list_buckets(self) -> List[str]:
         buckets = self._client.buckets_api().find_buckets().buckets

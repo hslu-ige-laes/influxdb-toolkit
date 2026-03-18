@@ -59,7 +59,42 @@ class InfluxDBClientBase(ABC):
         aggregation: Optional[str] = None,
         timezone: str = "UTC",
     ) -> pd.DataFrame:
-        """Fetch time series data."""
+        """Fetch time series data as a DataFrame.
+
+        Parameters
+        ----------
+        measurement : str
+            Name of the measurement (e.g. ``"temperature"``).
+        fields : Iterable[str]
+            Field keys to retrieve (e.g. ``["value", "humidity"]``).
+        start, end : datetime
+            Time range (inclusive start, exclusive end). Timezone-aware recommended.
+        tags : dict, optional
+            Tag filters (e.g. ``{"device_id": "abc", "sensor": "temp"}``).
+        interval : str, optional
+            Aggregation window (e.g. ``"5m"``, ``"1h"``, ``"1d"``).
+            Required when *aggregation* is set.
+        aggregation : str, optional
+            Aggregation function. Common values:
+
+            - ``"mean"`` – arithmetic mean
+            - ``"median"`` – median value
+            - ``"sum"`` – sum of values
+            - ``"count"`` – number of points
+            - ``"min"`` / ``"max"`` – minimum / maximum
+            - ``"first"`` / ``"last"`` – first / last point in window
+            - ``"spread"`` – difference between min and max
+            - ``"stddev"`` – standard deviation
+
+            Must be used together with *interval*.
+        timezone : str
+            Output timezone (default ``"UTC"``). E.g. ``"Europe/Zurich"``.
+
+        Returns
+        -------
+        pd.DataFrame
+            Columns: ``time``, plus one column per field.
+        """
 
     def get_multiple_timeseries(
         self,
@@ -69,9 +104,19 @@ class InfluxDBClientBase(ABC):
         interval: Optional[str] = None,
         aggregation: Optional[str] = None,
         timezone: str = "UTC",
+        short_names: bool = False,
     ) -> pd.DataFrame:
-        """Fetch multiple time series and merge on time."""
+        """Fetch multiple time series and merge on time.
+
+        Parameters
+        ----------
+        short_names : bool
+            If ``True``, column names use only the field name instead of
+            the full ``measurement::tag=value::field`` prefix.
+            Duplicate field names across queries get a numeric suffix.
+        """
         merged = pd.DataFrame()
+        seen_fields: Dict[str, int] = {}
         for query in queries:
             measurement = query.get("measurement")
             if not measurement:
@@ -102,8 +147,20 @@ class InfluxDBClientBase(ABC):
             )
             if df.empty:
                 continue
-            prefix = _series_prefix(measurement, tags)
-            df = _prefix_columns(df, prefix)
+            if short_names:
+                # Deduplicate: append _2, _3, ... for repeated field names
+                rename_map = {}
+                for col in df.columns:
+                    if col == "time":
+                        continue
+                    seen_fields[col] = seen_fields.get(col, 0) + 1
+                    if seen_fields[col] > 1:
+                        rename_map[col] = f"{col}_{seen_fields[col]}"
+                if rename_map:
+                    df = df.rename(columns=rename_map)
+            else:
+                prefix = _series_prefix(measurement, tags)
+                df = _prefix_columns(df, prefix)
             merged = _merge_on_time(merged, df)
         return merged
 
@@ -134,6 +191,22 @@ class InfluxDBClientBase(ABC):
     @abstractmethod
     def get_fields(self, measurement: str, database: Optional[str] = None) -> Dict[str, str]:
         """List field keys for a measurement with types if available."""
+
+    @abstractmethod
+    def get_series(
+        self,
+        measurement: Optional[str] = None,
+        database: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """List all series (measurement + tag combinations).
+
+        Returns a DataFrame with columns: measurement, plus one column per tag key.
+        If *measurement* is ``None``, series for **all** measurements are returned.
+        """
+
+    def get_all_series(self, database: Optional[str] = None) -> pd.DataFrame:
+        """Convenience: get_series for all measurements in one call."""
+        return self.get_series(measurement=None, database=database)
 
     def get_measurement_schema(
         self, measurement: str, database: Optional[str] = None
@@ -166,6 +239,66 @@ class InfluxDBClientBase(ABC):
                     "tags": ", ".join(tags),
                 })
         return pd.DataFrame(rows, columns=["measurement", "field", "type", "tags"])
+
+    def get_fields_per_series(
+        self,
+        measurement: Optional[str] = None,
+        database: Optional[str] = None,
+        ignore_fields: Optional[Iterable[str]] = None,
+    ) -> pd.DataFrame:
+        """Return a DataFrame with the actual (non-null) fields for each series.
+
+        Columns: measurement, <tag1>, <tag2>, ..., fields, n_fields
+
+        Uses one query per measurement (``LAST()`` grouped by tags) to detect
+        which fields contain data for each tag combination.
+        """
+        ignore = set(ignore_fields) if ignore_fields else set()
+        schema = self.get_schema(database=database)
+        series = self.get_series(measurement=measurement, database=database)
+        if series.empty or schema.empty:
+            return pd.DataFrame(columns=["measurement", "fields", "n_fields"])
+
+        tag_columns = [c for c in series.columns if c != "measurement"]
+        known_tags = set(tag_columns) | {"time"}
+        rows: List[Dict[str, Any]] = []
+
+        measurements = [measurement] if measurement else sorted(series["measurement"].unique())
+        for m in measurements:
+            group = series[series["measurement"] == m]
+            m_tags = [t for t in tag_columns if (group[t] != "–").any()] if tag_columns else []
+            m_fields = schema.loc[
+                (schema["measurement"] == m) & (~schema["field"].isin(ignore)),
+                "field",
+            ].tolist()
+            if not m_fields:
+                continue
+
+            select_expr = ", ".join(f'LAST("{f}") AS "{f}"' for f in m_fields)
+            group_by = ", ".join(f'"{t}"' for t in m_tags) if m_tags else ""
+            q = f'SELECT {select_expr} FROM "{m}"'
+            if group_by:
+                q += f" GROUP BY {group_by}"
+
+            try:
+                df_sample = self.query_raw(q, timezone="")
+            except Exception:
+                continue
+            if df_sample.empty:
+                continue
+
+            for _, srow in df_sample.iterrows():
+                non_null = [f for f in m_fields if f in srow.index and pd.notna(srow[f])]
+                if not non_null:
+                    continue
+                entry: Dict[str, Any] = {"measurement": m}
+                for t in m_tags:
+                    entry[t] = srow.get(t, "–") if t in srow.index else "–"
+                entry["fields"] = ", ".join(non_null)
+                entry["n_fields"] = len(non_null)
+                rows.append(entry)
+
+        return pd.DataFrame(rows)
 
     def list_databases(self) -> List[str]:
         raise UnsupportedOperationError("list_databases is only supported for InfluxDB v1")
@@ -244,20 +377,20 @@ class InfluxDBClientBase(ABC):
 
 # -------------------- Helper functions --------------------
 
-def _series_prefix(measurement: str, tags: Optional[Dict[str, str]]) -> str:
+def _series_prefix(measurement: str, tags: Optional[Dict[str, str]], sep: str = "::") -> str:
     if not tags:
         return measurement
-    tag_part = "_".join([f"{k}={v}" for k, v in sorted(tags.items())])
-    return f"{measurement}_{tag_part}"
+    tag_part = sep.join([f"{k}={v}" for k, v in sorted(tags.items())])
+    return f"{measurement}{sep}{tag_part}"
 
 
-def _prefix_columns(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+def _prefix_columns(df: pd.DataFrame, prefix: str, sep: str = "::") -> pd.DataFrame:
     if df.empty:
         return df
     cols = list(df.columns)
     if "time" not in cols:
         return df
-    rename_map = {col: f"{prefix}_{col}" for col in cols if col != "time"}
+    rename_map = {col: f"{prefix}{sep}{col}" for col in cols if col != "time"}
     return df.rename(columns=rename_map)
 
 

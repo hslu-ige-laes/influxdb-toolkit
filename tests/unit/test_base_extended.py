@@ -47,6 +47,9 @@ class RichDummyClient(InfluxDBClientBase):
     def get_fields(self, measurement: str, database=None):
         return {"value": "float"}
 
+    def get_series(self, measurement=None, database=None):
+        return pd.DataFrame(columns=["measurement"])
+
 
 def test_context_manager_connects_and_closes() -> None:
     client = RichDummyClient()
@@ -73,7 +76,7 @@ def test_get_multiple_timeseries_supports_fieldkey_alias_and_sorted_tags() -> No
         ]
     )
     assert "time" in df.columns
-    assert "power_a=1_b=2_value" in df.columns
+    assert "power::a=1::b=2::value" in df.columns
 
 
 def test_get_multiple_timeseries_validates_measurement_and_range() -> None:

@@ -36,8 +36,11 @@ class _ResultSet:
                 if measurement and series.get("name") != measurement:
                     continue
                 columns = series.get("columns", [])
+                tags = series.get("tags", {})
                 for row in series.get("values", []):
-                    yield dict(zip(columns, row))
+                    point = dict(zip(columns, row))
+                    point.update(tags)
+                    yield point
 
 
 class ChronografProxyClient:

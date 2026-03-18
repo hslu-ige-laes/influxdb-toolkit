@@ -39,6 +39,9 @@ class DummyClient(InfluxDBClientBase):
     def get_fields(self, measurement: str, database=None):
         return {}
 
+    def get_series(self, measurement=None, database=None):
+        return pd.DataFrame(columns=["measurement"])
+
 
 def test_get_multiple_timeseries_merges():
     client = DummyClient()
@@ -51,5 +54,5 @@ def test_get_multiple_timeseries_merges():
         ]
     )
     assert "time" in df.columns
-    assert any(c.startswith("m1_") for c in df.columns)
-    assert any(c.startswith("m2_") for c in df.columns)
+    assert any(c.startswith("m1::") for c in df.columns)
+    assert any(c.startswith("m2::") for c in df.columns)
