@@ -18,17 +18,19 @@ python -m pip install -e .
 
 ### Template A: V1 only
 
+Use this when your InfluxDB v1 endpoint is exposed via HTTPS on port 443.
+
 ```python
 from datetime import UTC, datetime, timedelta
 from influxdb_toolkit import InfluxDBClientFactory
 
 config = {
     "host": "localhost",
-    "port": 8086,
+    "port": 443,
     "username": "user",
     "password": "pass",
     "database": "mydb",
-    "ssl": False,
+    "ssl": True,
 }
 
 with InfluxDBClientFactory.get_client(version=1, config=config) as client:
@@ -102,11 +104,11 @@ with InfluxDBClientFactory.get_client(config=config) as client:
 ```python
 v1_config = {
     "host": "localhost",
-    "port": 8086,
+    "port": 443,
     "username": "user",
     "password": "pass",
     "database": "mydb",
-    "ssl": False,
+    "ssl": True,
 }
 ```
 
