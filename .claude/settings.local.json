@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -c \"import influxdb_toolkit; print\\(influxdb_toolkit.__file__\\)\")"
-    ]
-  }
-}
