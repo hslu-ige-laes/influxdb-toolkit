@@ -22,6 +22,10 @@
 
 - `base.py` defines the public API contract and shared helpers.
 - `v1/client.py` uses `influxdb` (InfluxQL) and implements exploration and query methods.
+- `v1/chronograf_proxy.py` provides a `ChronografProxyClient` adapter for deployments where
+  InfluxDB v1 is not directly reachable but is proxied through a Chronograf instance.
+  It implements the same interface as `influxdb.InfluxDBClient` and is passed via the
+  `client=` parameter of `InfluxDBClientFactory.get_client`.
 - `v2/client.py` uses `influxdb-client` (Flux) and adds InfluxQL compatibility for v2 where available.
 - `config.py` loads env and normalizes configuration into `V1Config` / `V2Config`.
 
@@ -65,7 +69,7 @@ The unified API is derived from common behavior found in existing internal packa
   - `influxdb-client` for v2 access
   - `pandas` for normalized DataFrame output
   - `python-dotenv` for local `.env` loading
-  - `requests` for lightweight compatibility calls
+  - `requests` for lightweight compatibility calls and the Chronograf proxy adapter
 - Development:
   - `pytest`, `pytest-cov`
 

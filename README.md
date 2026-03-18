@@ -72,6 +72,38 @@ with InfluxDBClientFactory.get_client(version=1, config=config) as client:
     print(df.head())
 ```
 
+### V1 behind a Chronograf proxy
+
+Use this when InfluxDB v1 is not directly reachable but is exposed through a
+[Chronograf](https://docs.influxdata.com/chronograf/) reverse proxy (common in
+hosted or containerised setups).
+
+```python
+from datetime import UTC, datetime, timedelta
+from influxdb_toolkit import InfluxDBClientFactory
+from influxdb_toolkit.v1.chronograf_proxy import ChronografProxyClient
+
+proxy = ChronografProxyClient(
+    base_url="https://your-chronograf-host.example.com",
+    username="user",
+    password="pass",
+    database="mydb",
+    source_id="1",       # find via GET /chronograf/v1/sources
+    verify_ssl=False,    # set True for a trusted cert
+)
+
+with InfluxDBClientFactory.get_client(version=1, config=proxy.toolkit_config, client=proxy) as client:
+    df = client.get_timeseries(
+        measurement="temperature",
+        fields=["value"],
+        start=datetime.now(UTC) - timedelta(hours=24),
+        end=datetime.now(UTC),
+        interval="5m",
+        aggregation="mean",
+    )
+    print(df.head())
+```
+
 ### V2 only
 
 ```python

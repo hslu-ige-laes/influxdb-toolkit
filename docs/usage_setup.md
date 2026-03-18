@@ -45,7 +45,42 @@ with InfluxDBClientFactory.get_client(version=1, config=config) as client:
     print(df.head())
 ```
 
-### Template B: V2 only
+### Template B: V1 behind a Chronograf proxy
+
+Use this when InfluxDB v1 is not directly reachable but sits behind a
+Chronograf reverse proxy (e.g. a hosted or Docker-based deployment on port 443).
+
+```python
+from datetime import UTC, datetime, timedelta
+from influxdb_toolkit import InfluxDBClientFactory
+from influxdb_toolkit.v1.chronograf_proxy import ChronografProxyClient
+
+proxy = ChronografProxyClient(
+    base_url="https://your-chronograf-host.example.com",
+    username="user",
+    password="pass",
+    database="mydb",
+    source_id="1",       # find via GET /chronograf/v1/sources
+    verify_ssl=False,    # set True for a trusted cert
+)
+
+with InfluxDBClientFactory.get_client(version=1, config=proxy.toolkit_config, client=proxy) as client:
+    df = client.get_timeseries(
+        measurement="temperature",
+        fields=["value"],
+        start=datetime.now(UTC) - timedelta(hours=24),
+        end=datetime.now(UTC),
+        interval="5m",
+        aggregation="mean",
+    )
+    print(df.head())
+```
+
+How to find your `source_id`: open a browser to
+`https://your-chronograf-host.example.com/chronograf/v1/sources` — the `id`
+field in the first source entry is what you need (usually `"1"`).
+
+### Template D: V2 only
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -70,7 +105,7 @@ with InfluxDBClientFactory.get_client(version=2, config=config) as client:
     print(df.head())
 ```
 
-### Template C: Auto-detect v1/v2
+### Template E: Auto-detect v1/v2
 
 ```python
 from datetime import UTC, datetime, timedelta
