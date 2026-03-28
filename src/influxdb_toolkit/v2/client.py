@@ -200,7 +200,7 @@ schema.tagKeys(
         df = self._client.query_api().query_data_frame(query, org=self._org)
         df = _normalize_flux_dataframe(df, "UTC", pivot=False)
         values = sorted({v for v in df.get("_value", []) if isinstance(v, str)})
-        return [v for v in values if v not in {"_start", "_stop", "_measurement"}]
+        return [v for v in values if v not in {"_start", "_stop", "_measurement", "_field"}]
 
     def get_tag_values(
         self, measurement: str, tag_key: str, database: Optional[str] = None
@@ -236,7 +236,11 @@ schema.fieldKeys(
         return {v: "" for v in sorted({v for v in df.get("_value", []) if isinstance(v, str)})}
 
     def get_schema(self, database: Optional[str] = None) -> pd.DataFrame:
-        """Optimized: uses bulk Flux schema queries (2 queries total)."""
+        """Optimized: uses bulk Flux schema queries (2 queries total).
+
+        Falls back to per-measurement queries when the bulk queries don't
+        include the ``_measurement`` column (common on some InfluxDB v2 builds).
+        """
         bucket = database or self._bucket
         if not bucket:
             raise ValueError("bucket is required for v2 queries")
@@ -249,6 +253,16 @@ schema.fieldKeys(bucket: "{bucket}")
             df_fields = self._client.query_api().query_data_frame(fk_query, org=self._org)
             df_fields = _normalize_flux_dataframe(df_fields, "UTC", pivot=False)
 
+            # Check if bulk query includes measurement info
+            has_measurement = (
+                not df_fields.empty and "_measurement" in df_fields.columns
+            )
+
+            if not has_measurement:
+                # Fallback: use the base class implementation which queries
+                # per measurement (uses get_tags/get_fields with predicate).
+                return InfluxDBClientBase.get_schema(self, database=database)
+
             # Bulk tag keys with measurement info
             tk_query = f'''
 import "influxdata/influxdb/schema"
@@ -259,6 +273,8 @@ schema.tagKeys(bucket: "{bucket}")
         except Exception as exc:
             raise InfluxDBQueryError(str(exc)) from exc
 
+        _IGNORED_TAGS = {"_start", "_stop", "_measurement", "_field"}
+
         # Build tag lookup: measurement → sorted tag list
         tags_by_m: Dict[str, List[str]] = {}
         if not df_tags.empty:
@@ -268,15 +284,13 @@ schema.tagKeys(bucket: "{bucket}")
                 for _, row in df_tags.iterrows():
                     m_name = row[m_col]
                     tag = row[v_col]
-                    if isinstance(tag, str) and tag not in {"_start", "_stop", "_measurement"}:
+                    if isinstance(tag, str) and tag not in _IGNORED_TAGS:
                         tags_by_m.setdefault(m_name, []).append(tag)
             elif v_col:
-                # No measurement column: tags apply globally
                 all_tags = sorted({
                     v for v in df_tags[v_col]
-                    if isinstance(v, str) and v not in {"_start", "_stop", "_measurement"}
+                    if isinstance(v, str) and v not in _IGNORED_TAGS
                 })
-                # Will apply to all measurements
                 tags_by_m["_all_"] = all_tags
         for k in tags_by_m:
             tags_by_m[k] = sorted(set(tags_by_m[k]))
@@ -284,23 +298,13 @@ schema.tagKeys(bucket: "{bucket}")
         # Build rows from field keys
         rows = []
         if not df_fields.empty:
-            m_col = "_measurement" if "_measurement" in df_fields.columns else None
             v_col = "_value" if "_value" in df_fields.columns else None
-            if m_col and v_col:
+            if v_col:
                 for _, row in df_fields.iterrows():
-                    m_name = row[m_col]
+                    m_name = row["_measurement"]
                     tag_list = tags_by_m.get(m_name, tags_by_m.get("_all_", []))
                     rows.append({
                         "measurement": m_name,
-                        "field": row[v_col],
-                        "type": "",
-                        "tags": ", ".join(tag_list),
-                    })
-            elif v_col:
-                for _, row in df_fields.iterrows():
-                    tag_list = tags_by_m.get("_all_", [])
-                    rows.append({
-                        "measurement": "",
                         "field": row[v_col],
                         "type": "",
                         "tags": ", ".join(tag_list),
