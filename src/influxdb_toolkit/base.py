@@ -15,12 +15,19 @@ from .models import MeasurementSchema, WriteResult
 class InfluxDBClientBase(ABC):
     """Abstract base class for InfluxDB clients."""
 
-    def __init__(self, version: int, config: Dict[str, Any], allow_write: bool = False) -> None:
+    def __init__(
+        self,
+        version: int,
+        config: Dict[str, Any],
+        allow_write: bool = False,
+        allow_admin: bool = False,
+    ) -> None:
         self.version = version
         self.config = config
         self.connected = False
         self._client = None
         self._allow_write = allow_write
+        self._allow_admin = allow_admin
         self.logger = logging.getLogger(f"{__name__}.v{version}")
 
     # -------------------- Connection management --------------------
@@ -336,31 +343,31 @@ class InfluxDBClientBase(ABC):
         end: datetime,
         tags: Optional[Dict[str, str]] = None,
     ) -> bool:
-        self._ensure_writes_allowed("delete_range")
+        self._ensure_admin_allowed("delete_range")
         raise UnsupportedOperationError("delete_range not implemented for this client")
 
     def create_database(self, name: str) -> bool:
-        self._ensure_writes_allowed("create_database")
+        self._ensure_admin_allowed("create_database")
         raise UnsupportedOperationError("create_database not implemented for this client")
 
     def delete_database(self, name: str) -> bool:
-        self._ensure_writes_allowed("delete_database")
+        self._ensure_admin_allowed("delete_database")
         raise UnsupportedOperationError("delete_database not implemented for this client")
 
     def create_bucket(self, name: str, retention: str = "0s") -> bool:
-        self._ensure_writes_allowed("create_bucket")
+        self._ensure_admin_allowed("create_bucket")
         raise UnsupportedOperationError("create_bucket not implemented for this client")
 
     def create_user(self, username: str, password: str) -> bool:
-        self._ensure_writes_allowed("create_user")
+        self._ensure_admin_allowed("create_user")
         raise UnsupportedOperationError("create_user not implemented for this client")
 
     def delete_user(self, username: str) -> bool:
-        self._ensure_writes_allowed("delete_user")
+        self._ensure_admin_allowed("delete_user")
         raise UnsupportedOperationError("delete_user not implemented for this client")
 
     def grant_privileges(self, user: str, database: str) -> bool:
-        self._ensure_writes_allowed("grant_privileges")
+        self._ensure_admin_allowed("grant_privileges")
         raise UnsupportedOperationError("grant_privileges not implemented for this client")
 
     def _ensure_writes_allowed(self, op: str) -> None:
@@ -369,10 +376,30 @@ class InfluxDBClientBase(ABC):
                 f"{op} blocked. Set INFLUXDB_ALLOW_WRITE=true or allow_write=True in config."
             )
 
+    def _ensure_admin_allowed(self, op: str) -> None:
+        self._ensure_writes_allowed(op)
+        if not self._allow_admin:
+            raise UnsafeOperationError(
+                f"{op} blocked. Set INFLUXDB_ALLOW_ADMIN=true or allow_admin=True in config."
+            )
+
+    def _ensure_raw_query_allowed(self, query: str) -> None:
+        ops = _raw_query_operations(query)
+        disabled_ops = sorted(ops.intersection({"DROP", "ALTER", "GRANT", "REVOKE"}))
+        if disabled_ops:
+            raise UnsupportedOperationError(
+                f"raw {disabled_ops[0]} queries are disabled. Use explicit admin methods once approved."
+            )
+        if "CREATE" in ops:
+            self._ensure_admin_allowed("raw CREATE")
+        if "DELETE" in ops:
+            self._ensure_admin_allowed("raw DELETE")
+
     def __repr__(self) -> str:
         status = "connected" if self.connected else "disconnected"
         writes = "writes_enabled" if self._allow_write else "read_only"
-        return f"InfluxDBClient(v{self.version}, {status}, {writes})"
+        admin = "admin_enabled" if self._allow_admin else "admin_disabled"
+        return f"InfluxDBClient(v{self.version}, {status}, {writes}, {admin})"
 
 
 # -------------------- Helper functions --------------------
@@ -400,3 +427,64 @@ def _merge_on_time(left: pd.DataFrame, right: pd.DataFrame) -> pd.DataFrame:
     if right.empty:
         return left
     return left.merge(right, on="time", how="outer")
+
+
+def _raw_query_operations(query: str) -> set[str]:
+    return {
+        token.upper()
+        for token in _raw_query_tokens(query)
+        if token.upper() in {"CREATE", "DROP", "DELETE", "ALTER", "GRANT", "REVOKE"}
+    }
+
+
+def _raw_query_tokens(query: str) -> List[str]:
+    tokens: List[str] = []
+    buf: List[str] = []
+    i = 0
+    quote = ""
+
+    def flush() -> None:
+        if buf:
+            tokens.append("".join(buf))
+            buf.clear()
+
+    while i < len(query):
+        ch = query[i]
+        nxt = query[i + 1] if i + 1 < len(query) else ""
+
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                if i + 1 < len(query) and query[i + 1] == quote:
+                    i += 2
+                    continue
+                quote = ""
+            i += 1
+            continue
+
+        if ch in {"'", '"'}:
+            flush()
+            quote = ch
+            i += 1
+            continue
+        if ch == "#" or (ch == "-" and nxt == "-") or (ch == "/" and nxt == "/"):
+            i = query.find("\n", i)
+            if i == -1:
+                break
+            continue
+        if ch == "/" and nxt == "*":
+            i = query.find("*/", i + 2)
+            if i == -1:
+                break
+            i += 2
+            continue
+        if ch.isalnum() or ch == "_":
+            buf.append(ch)
+        else:
+            flush()
+        i += 1
+
+    flush()
+    return tokens

@@ -15,7 +15,7 @@ from influxdb_toolkit.v2.client import (
 )
 
 
-def test_v1_admin_operations_disabled_even_when_writes_enabled() -> None:
+def test_v1_admin_operations_require_admin_permission() -> None:
     client = InfluxDBClientV1(
         host="localhost",
         port=8086,
@@ -25,13 +25,13 @@ def test_v1_admin_operations_disabled_even_when_writes_enabled() -> None:
         allow_write=True,
         client=object(),
     )
-    with pytest.raises(UnsupportedOperationError, match="disabled until admin ops are approved"):
+    with pytest.raises(UnsafeOperationError, match="allow_admin=True"):
         client.create_database("x")
-    with pytest.raises(UnsupportedOperationError, match="disabled until admin ops are approved"):
+    with pytest.raises(UnsafeOperationError, match="allow_admin=True"):
         client.create_user("u", "p")
 
 
-def test_v2_admin_operations_disabled_even_when_writes_enabled() -> None:
+def test_v2_admin_operations_require_admin_permission() -> None:
     client = InfluxDBClientV2(
         url="http://localhost:8086",
         token="token",
@@ -40,10 +40,25 @@ def test_v2_admin_operations_disabled_even_when_writes_enabled() -> None:
         allow_write=True,
         client=object(),
     )
-    with pytest.raises(UnsupportedOperationError, match="disabled until admin ops are approved"):
+    with pytest.raises(UnsafeOperationError, match="allow_admin=True"):
         client.create_bucket("x")
-    with pytest.raises(UnsupportedOperationError, match="disabled until admin ops are approved"):
+    with pytest.raises(UnsafeOperationError, match="allow_admin=True"):
         client.delete_database("x")
+
+
+def test_admin_operations_disabled_even_when_admin_permission_is_enabled() -> None:
+    client = InfluxDBClientV1(
+        host="localhost",
+        port=8086,
+        username=None,
+        password=None,
+        database="db",
+        allow_write=True,
+        allow_admin=True,
+        client=object(),
+    )
+    with pytest.raises(UnsupportedOperationError, match="disabled until admin ops are approved"):
+        client.create_database("x")
 
 
 def test_admin_operations_still_blocked_by_allow_write_guard() -> None:

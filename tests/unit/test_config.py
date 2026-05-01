@@ -4,6 +4,7 @@ from influxdb_toolkit.config import (
     V1Config,
     V2Config,
     _get_bool,
+    _coerce_bool,
     resolve_v1_config,
     resolve_v2_config,
     v1_from_env,
@@ -19,6 +20,13 @@ def test_get_bool_variants() -> None:
     assert _get_bool(None, default=True) is True
 
 
+def test_coerce_bool_does_not_treat_false_string_as_true() -> None:
+    assert _coerce_bool("false") is False
+    assert _coerce_bool("0") is False
+    assert _coerce_bool("true") is True
+    assert _coerce_bool(True) is True
+
+
 def test_v1_from_env_reads_v1_and_fallback_keys(monkeypatch) -> None:
     monkeypatch.setenv("INFLUXDB_HOST", "fallback-host")
     monkeypatch.setenv("INFLUXDB_PORT", "9000")
@@ -26,6 +34,7 @@ def test_v1_from_env_reads_v1_and_fallback_keys(monkeypatch) -> None:
     monkeypatch.setenv("INFLUXDB_PWD", "fallback-pwd")
     monkeypatch.setenv("INFLUXDB_DB", "fallback-db")
     monkeypatch.setenv("INFLUXDB_ALLOW_WRITE", "true")
+    monkeypatch.setenv("INFLUXDB_ALLOW_ADMIN", "true")
     monkeypatch.delenv("INFLUXDB_V1_HOST", raising=False)
     monkeypatch.delenv("INFLUXDB_V1_PORT", raising=False)
     monkeypatch.delenv("INFLUXDB_V1_USER", raising=False)
@@ -40,6 +49,7 @@ def test_v1_from_env_reads_v1_and_fallback_keys(monkeypatch) -> None:
     assert cfg.password == "fallback-pwd"
     assert cfg.database == "fallback-db"
     assert cfg.allow_write is True
+    assert cfg.allow_admin is True
 
 
 def test_v2_from_env_reads_values(monkeypatch) -> None:
@@ -48,6 +58,7 @@ def test_v2_from_env_reads_values(monkeypatch) -> None:
     monkeypatch.setenv("INFLUXDB_V2_ORG", "org")
     monkeypatch.setenv("INFLUXDB_V2_BUCKET", "bucket")
     monkeypatch.setenv("INFLUXDB_ALLOW_WRITE", "false")
+    monkeypatch.setenv("INFLUXDB_ALLOW_ADMIN", "false")
 
     cfg = v2_from_env()
 
@@ -56,6 +67,7 @@ def test_v2_from_env_reads_values(monkeypatch) -> None:
     assert cfg.org == "org"
     assert cfg.bucket == "bucket"
     assert cfg.allow_write is False
+    assert cfg.allow_admin is False
 
 
 def test_resolve_v1_config_supports_alias_keys() -> None:
@@ -69,6 +81,7 @@ def test_resolve_v1_config_supports_alias_keys() -> None:
             "ssl": True,
             "verify_ssl": False,
             "allow_write": True,
+            "allow_admin": "false",
         }
     )
 
@@ -81,10 +94,18 @@ def test_resolve_v1_config_supports_alias_keys() -> None:
         ssl=True,
         verify_ssl=False,
         allow_write=True,
+        allow_admin=False,
     )
 
 
 def test_resolve_v2_config_dataclass_passthrough() -> None:
-    original = V2Config(url="https://v2", token="t", org="o", bucket="b", allow_write=False)
+    original = V2Config(
+        url="https://v2",
+        token="t",
+        org="o",
+        bucket="b",
+        allow_write=False,
+        allow_admin=False,
+    )
     cfg = resolve_v2_config(original)
     assert cfg is original

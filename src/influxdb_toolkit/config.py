@@ -20,6 +20,16 @@ def _get_bool(value: Optional[str], default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return _get_bool(value, default=default)
+    return bool(value)
+
+
 @dataclass(frozen=True)
 class V1Config:
     host: str
@@ -30,6 +40,7 @@ class V1Config:
     ssl: bool = False
     verify_ssl: bool = False
     allow_write: bool = False
+    allow_admin: bool = False
 
 
 @dataclass(frozen=True)
@@ -39,6 +50,7 @@ class V2Config:
     org: str
     bucket: Optional[str] = None
     allow_write: bool = False
+    allow_admin: bool = False
 
 
 def v1_from_env() -> V1Config:
@@ -52,6 +64,7 @@ def v1_from_env() -> V1Config:
         ssl=_get_bool(os.getenv("INFLUXDB_V1_SSL"), False),
         verify_ssl=_get_bool(os.getenv("INFLUXDB_V1_VERIFY_SSL"), False),
         allow_write=_get_bool(os.getenv("INFLUXDB_ALLOW_WRITE"), False),
+        allow_admin=_get_bool(os.getenv("INFLUXDB_ALLOW_ADMIN"), False),
     )
 
 
@@ -63,6 +76,7 @@ def v2_from_env() -> V2Config:
         org=os.getenv("INFLUXDB_V2_ORG", os.getenv("INFLUXDB_ORG", "")),
         bucket=os.getenv("INFLUXDB_V2_BUCKET", os.getenv("INFLUXDB_BUCKET")),
         allow_write=_get_bool(os.getenv("INFLUXDB_ALLOW_WRITE"), False),
+        allow_admin=_get_bool(os.getenv("INFLUXDB_ALLOW_ADMIN"), False),
     )
 
 
@@ -81,9 +95,10 @@ def resolve_v1_config(config: V1Config | Mapping[str, Any]) -> V1Config:
         username=_dict_get(config, "username", _dict_get(config, "user")),
         password=_dict_get(config, "password", _dict_get(config, "pwd")),
         database=_dict_get(config, "database"),
-        ssl=bool(_dict_get(config, "ssl", False)),
-        verify_ssl=bool(_dict_get(config, "verify_ssl", False)),
-        allow_write=bool(_dict_get(config, "allow_write", False)),
+        ssl=_coerce_bool(_dict_get(config, "ssl", False)),
+        verify_ssl=_coerce_bool(_dict_get(config, "verify_ssl", False)),
+        allow_write=_coerce_bool(_dict_get(config, "allow_write", False)),
+        allow_admin=_coerce_bool(_dict_get(config, "allow_admin", False)),
     )
 
 
@@ -95,5 +110,6 @@ def resolve_v2_config(config: V2Config | Mapping[str, Any]) -> V2Config:
         token=_dict_get(config, "token"),
         org=_dict_get(config, "org"),
         bucket=_dict_get(config, "bucket"),
-        allow_write=bool(_dict_get(config, "allow_write", False)),
+        allow_write=_coerce_bool(_dict_get(config, "allow_write", False)),
+        allow_admin=_coerce_bool(_dict_get(config, "allow_admin", False)),
     )

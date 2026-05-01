@@ -63,6 +63,7 @@ class InfluxDBClientFactory:
                 ssl=cfg.ssl,
                 verify_ssl=cfg.verify_ssl,
                 allow_write=cfg.allow_write,
+                allow_admin=cfg.allow_admin,
                 client=client_override,
             )
         if version == 2:
@@ -73,6 +74,7 @@ class InfluxDBClientFactory:
                 org=cfg.org,
                 bucket=cfg.bucket,
                 allow_write=cfg.allow_write,
+                allow_admin=cfg.allow_admin,
                 client=client_override,
             )
 

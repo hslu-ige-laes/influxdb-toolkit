@@ -26,6 +26,7 @@ class InfluxDBClientV2(InfluxDBClientBase):
         org: str,
         bucket: Optional[str] = None,
         allow_write: bool = False,
+        allow_admin: bool = False,
         client: Optional[object] = None,
     ) -> None:
         config = {
@@ -34,7 +35,12 @@ class InfluxDBClientV2(InfluxDBClientBase):
             "org": org,
             "bucket": bucket,
         }
-        super().__init__(version=2, config=config, allow_write=allow_write)
+        super().__init__(
+            version=2,
+            config=config,
+            allow_write=allow_write,
+            allow_admin=allow_admin,
+        )
         if client is None:
             from influxdb_client import InfluxDBClient
 
@@ -105,6 +111,7 @@ class InfluxDBClientV2(InfluxDBClientBase):
         return df
 
     def query_raw(self, query: str, timezone: str = "UTC") -> pd.DataFrame:
+        self._ensure_raw_query_allowed(query)
         if _is_influxql(query):
             return self._execute_influxql_compat(query, timezone)
         try:
@@ -356,7 +363,12 @@ schema.tagKeys(bucket: "{bucket}")
         for p in points:
             if "measurement" not in p:
                 p["measurement"] = measurement
-        write_api = self._client.write_api()
+        try:
+            from influxdb_client.client.write_api import SYNCHRONOUS
+
+            write_api = self._client.write_api(write_options=SYNCHRONOUS)
+        except TypeError:
+            write_api = self._client.write_api()
         chunks = _chunk_points(points, batch_size)
         for chunk in chunks:
             write_api.write(bucket=self._bucket, org=self._org, record=chunk)
@@ -372,7 +384,7 @@ schema.tagKeys(bucket: "{bucket}")
         end: datetime,
         tags: Optional[Dict[str, str]] = None,
     ) -> bool:
-        self._ensure_writes_allowed("delete_range")
+        self._ensure_admin_allowed("delete_range")
         if not self._bucket:
             raise ValueError("bucket is required for v2 delete")
         predicate = f'_measurement="{measurement}"'
@@ -383,7 +395,7 @@ schema.tagKeys(bucket: "{bucket}")
         return True
 
     def create_bucket(self, name: str, retention: str = "0s") -> bool:
-        self._ensure_writes_allowed("create_bucket")
+        self._ensure_admin_allowed("create_bucket")
         # Deferred by project rule: do not execute real admin mutations yet.
         # retention_rules = None
         # if retention and retention != "0s":
@@ -394,13 +406,13 @@ schema.tagKeys(bucket: "{bucket}")
         raise UnsupportedOperationError("create_bucket is disabled until admin ops are approved")
 
     def create_database(self, name: str) -> bool:
-        self._ensure_writes_allowed("create_database")
+        self._ensure_admin_allowed("create_database")
         # Deferred by project rule: do not execute real admin mutations yet.
         # return self.create_bucket(name=name)
         raise UnsupportedOperationError("create_database is disabled until admin ops are approved")
 
     def delete_database(self, name: str) -> bool:
-        self._ensure_writes_allowed("delete_database")
+        self._ensure_admin_allowed("delete_database")
         # Deferred by project rule: do not execute real admin mutations yet.
         # buckets_api = self._client.buckets_api()
         # if not hasattr(buckets_api, "find_bucket_by_name") or not hasattr(buckets_api, "delete_bucket"):

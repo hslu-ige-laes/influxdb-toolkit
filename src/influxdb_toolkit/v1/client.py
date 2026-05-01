@@ -28,6 +28,7 @@ class InfluxDBClientV1(InfluxDBClientBase):
         ssl: bool = False,
         verify_ssl: bool = False,
         allow_write: bool = False,
+        allow_admin: bool = False,
         client: Optional[object] = None,
     ) -> None:
         config = {
@@ -39,7 +40,12 @@ class InfluxDBClientV1(InfluxDBClientBase):
             "ssl": ssl,
             "verify_ssl": verify_ssl,
         }
-        super().__init__(version=1, config=config, allow_write=allow_write)
+        super().__init__(
+            version=1,
+            config=config,
+            allow_write=allow_write,
+            allow_admin=allow_admin,
+        )
         if client is None:
             from influxdb import InfluxDBClient
 
@@ -238,6 +244,7 @@ class InfluxDBClientV1(InfluxDBClientBase):
         return df
 
     def query_raw(self, query: str, timezone: str = "UTC") -> pd.DataFrame:
+        self._ensure_raw_query_allowed(query)
         qry = f"{query} tz('{timezone}')" if timezone else query
         try:
             result = self._client.query(qry)
@@ -425,21 +432,21 @@ class InfluxDBClientV1(InfluxDBClientBase):
             raise InfluxDBQueryError(str(exc)) from exc
 
     def create_database(self, name: str) -> bool:
-        self._ensure_writes_allowed("create_database")
+        self._ensure_admin_allowed("create_database")
         # Deferred by project rule: do not execute real admin mutations yet.
         # qry = f'CREATE DATABASE "{name}"'
         # self._client.query(qry)
         raise UnsupportedOperationError("create_database is disabled until admin ops are approved")
 
     def delete_database(self, name: str) -> bool:
-        self._ensure_writes_allowed("delete_database")
+        self._ensure_admin_allowed("delete_database")
         # Deferred by project rule: do not execute real admin mutations yet.
         # qry = f'DROP DATABASE "{name}"'
         # self._client.query(qry)
         raise UnsupportedOperationError("delete_database is disabled until admin ops are approved")
 
     def create_user(self, username: str, password: str) -> bool:
-        self._ensure_writes_allowed("create_user")
+        self._ensure_admin_allowed("create_user")
         # Deferred by project rule: do not execute real admin mutations yet.
         # safe_pwd = password.replace("'", "\\'")
         # qry = f"CREATE USER \"{username}\" WITH PASSWORD '{safe_pwd}'"
@@ -447,14 +454,14 @@ class InfluxDBClientV1(InfluxDBClientBase):
         raise UnsupportedOperationError("create_user is disabled until admin ops are approved")
 
     def delete_user(self, username: str) -> bool:
-        self._ensure_writes_allowed("delete_user")
+        self._ensure_admin_allowed("delete_user")
         # Deferred by project rule: do not execute real admin mutations yet.
         # qry = f'DROP USER "{username}"'
         # self._client.query(qry)
         raise UnsupportedOperationError("delete_user is disabled until admin ops are approved")
 
     def grant_privileges(self, user: str, database: str) -> bool:
-        self._ensure_writes_allowed("grant_privileges")
+        self._ensure_admin_allowed("grant_privileges")
         # Deferred by project rule: do not execute real admin mutations yet.
         # qry = f'GRANT ALL ON "{database}" TO "{user}"'
         # self._client.query(qry)
