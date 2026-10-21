@@ -289,7 +289,8 @@ class InfluxDBClientBase(ABC):
 
             try:
                 df_sample = self.query_raw(q, timezone="")
-            except Exception:
+            except Exception as exc:
+                self.logger.warning("get_fields_per_series: query for %s failed: %s", m, exc)
                 continue
             if df_sample.empty:
                 continue
@@ -306,6 +307,26 @@ class InfluxDBClientBase(ABC):
                 rows.append(entry)
 
         return pd.DataFrame(rows)
+
+    # -------------------- Series-level bulk access --------------------
+    # Implemented for v2; see InfluxDBClientV2 for documentation.
+
+    def discover_series(self, start=None, measurement=None, retries: int = 3):
+        raise UnsupportedOperationError(f"discover_series is not implemented for v{self.version}")
+
+    def iter_timeseries_chunks(self, measurement, field, start, end, tags=None, **kwargs):
+        raise UnsupportedOperationError(
+            f"iter_timeseries_chunks is not implemented for v{self.version}"
+        )
+
+    def last_timestamp(self, measurement, field, tags=None):
+        raise UnsupportedOperationError(f"last_timestamp is not implemented for v{self.version}")
+
+    def first_timestamp(self, measurement, field, tags=None):
+        raise UnsupportedOperationError(f"first_timestamp is not implemented for v{self.version}")
+
+    def daily_counts(self, measurement, field, start, end, tags=None, output="pandas"):
+        raise UnsupportedOperationError(f"daily_counts is not implemented for v{self.version}")
 
     def list_databases(self) -> List[str]:
         raise UnsupportedOperationError("list_databases is only supported for InfluxDB v1")

@@ -12,6 +12,7 @@ from .exceptions import (
 )
 from .models import MeasurementSchema, WriteResult
 from .profiles import list_profile_names, resolve_profile
+from .series import SeriesInfo
 
 __all__ = [
     "InfluxDBClientFactory",
@@ -25,6 +26,7 @@ __all__ = [
     "UnsafeOperationError",
     "UnsupportedOperationError",
     "MeasurementSchema",
+    "SeriesInfo",
     "WriteResult",
     "list_profile_names",
     "resolve_profile",

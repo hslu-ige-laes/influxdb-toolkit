@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+- Added series-level bulk access for v2: `discover_series()` (existing series incl. last
+  timestamp via pushed-down `last()`), `iter_timeseries_chunks()` (time-windowed raw
+  download with retry, pandas or polars output), `first_timestamp()`/`last_timestamp()` and `daily_counts()`
+  (empty days reported as 0).
+- Added `SeriesInfo` with a readable, reversible series key.
+- Added optional `polars` extra.
+- Fixed: the v2 `get_series()` fallback no longer reports non-existing tag combinations
+  (cartesian product); it now lists the series that actually exist.
+- `get_fields_per_series()` logs failed per-measurement queries instead of hiding them.
+
 ## 0.1.0
 - Initial scaffold with v1/v2 abstraction, safe-by-default writes, and docs.
 - Added named connection profiles and profile-driven smoke testing.
