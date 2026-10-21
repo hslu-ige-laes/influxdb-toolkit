@@ -5,6 +5,8 @@
   timestamp via pushed-down `last()`), `iter_timeseries_chunks()` (time-windowed raw
   download with retry, pandas or polars output), `first_timestamp()`/`last_timestamp()` and `daily_counts()`
   (empty days reported as 0).
+- Series queries match exactly: series with additional tag keys are excluded
+  (`not exists`), and only transient errors (network, 5xx, 429) are retried.
 - Added `SeriesInfo` with a readable, reversible series key.
 - Added optional `polars` extra.
 - Fixed: the v2 `get_series()` fallback no longer reports non-existing tag combinations

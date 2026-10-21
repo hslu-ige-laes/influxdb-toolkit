@@ -21,7 +21,8 @@ UTC = timezone.utc
 
 
 class FakeQueryApi:
-    def __init__(self, tables=None, csv_by_window=None):
+    def __init__(self, tables=None, csv_by_window=None, tag_keys=()):
+        self.tag_keys = list(tag_keys)
         self.tables = tables or []
         self.csv_by_window = csv_by_window or {}
         self.queries = []
@@ -29,6 +30,10 @@ class FakeQueryApi:
     def query(self, query, org=None):
         self.queries.append(query)
         return self.tables
+
+    def query_data_frame(self, query, org=None):
+        self.queries.append(query)
+        return pd.DataFrame({"_value": self.tag_keys})
 
     def query_raw(self, query, org=None, dialect=None):
         self.queries.append(query)
@@ -123,7 +128,7 @@ def test_iter_timeseries_chunks(output):
     assert len(chunks) == 2
     values = [v for c in chunks for v in list(c["value"])]
     assert values == [1.5, 2.0, 3.0]
-    assert 'r["room"] == "1"' in api.queries[0]
+    assert 'r["room"] == "1"' in api.queries[1]  # [0] = cached tag keys
     first_time = chunks[0]["time"][0]
     assert str(first_time).startswith("2025-01-01 00:00:00")
 
@@ -132,6 +137,34 @@ def test_empty_chunk():
     df = csv_to_frame(b"\r\n", "pandas")
     assert df.empty and list(df.columns) == ["time", "value"]
     assert str(df["time"].dtype) == "datetime64[ns, UTC]"
+
+
+def test_chunks_exclude_series_with_additional_tags():
+    api = FakeQueryApi(tag_keys=["room", "sensor"])
+    client = make_client(api)
+    window = (datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC))
+    list(client.iter_timeseries_chunks("temp", "value", *window, tags={"room": "1"}))
+    query = api.queries[-1]
+    assert 'r["room"] == "1"' in query
+    assert 'not exists r["sensor"]' in query
+    assert 'not exists r["room"]' not in query
+    list(client.iter_timeseries_chunks("temp", "value", *window, tags={"room": "1"}))
+    assert sum("schema.tagKeys" in q for q in api.queries) == 1  # cached
+
+
+def test_non_transient_errors_are_not_retried():
+    calls = []
+
+    class ApiException(Exception):
+        status = 401
+
+    def unauthorized():
+        calls.append(1)
+        raise ApiException("unauthorized")
+
+    with pytest.raises(InfluxDBQueryError, match="unauthorized"):
+        with_retry(unauthorized, retries=3, backoff_s=0)
+    assert len(calls) == 1
 
 
 def test_retry_gives_up_with_query_error():

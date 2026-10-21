@@ -65,6 +65,7 @@ class InfluxDBClientV2(InfluxDBClientBase):
         self._token = token
         self._org = org
         self._bucket = bucket
+        self._tag_keys_cache: Dict[tuple, List[str]] = {}
 
     def connect(self) -> None:
         try:
@@ -131,11 +132,12 @@ class InfluxDBClientV2(InfluxDBClientBase):
         start: Optional[datetime] = None,
         measurement: Optional[str] = None,
         retries: int = 3,
+        bucket: Optional[str] = None,
     ) -> List[SeriesInfo]:
         """List every existing series (measurement, tag set, field) with its
         last timestamp, sorted by key. ``start`` limits the search to series
         with data since then (default: all time)."""
-        bucket = self._require_bucket()
+        bucket = bucket or self._require_bucket()
         query = build_series_discovery_query(bucket, start=start, measurement=measurement)
         tables = with_retry(lambda: self._client.query_api().query(query, org=self._org), retries)
         result: List[SeriesInfo] = []
@@ -172,10 +174,12 @@ class InfluxDBClientV2(InfluxDBClientBase):
         """Raw samples of one series in ``[start, end)``, one frame per time
         window of ``chunk``. Frames have columns ``time`` (UTC) and ``value``
         and are pandas or polars DataFrames depending on ``output``. Pass the
-        complete tag set of the series to avoid mixing series."""
+        complete tag set of the series: series of the measurement with other or
+        additional tag keys are excluded."""
         bucket = self._require_bucket()
+        absent = self._absent_tags(measurement, tags)
         for lo, hi in time_windows(start, end, chunk):
-            query = build_series_range_query(bucket, measurement, field, lo, hi, tags)
+            query = build_series_range_query(bucket, measurement, field, lo, hi, tags, absent)
             yield csv_to_frame(with_retry(lambda q=query: self._query_csv(q), retries), output)
 
     def last_timestamp(
@@ -196,7 +200,8 @@ class InfluxDBClientV2(InfluxDBClientBase):
         self, measurement: str, field: str, tags: Optional[Dict[str, str]], selector: str
     ) -> List[datetime]:
         bucket = self._require_bucket()
-        query = build_last_timestamp_query(bucket, measurement, field, tags, selector)
+        absent = self._absent_tags(measurement, tags)
+        query = build_last_timestamp_query(bucket, measurement, field, tags, selector, absent)
         tables = with_retry(lambda: self._client.query_api().query(query, org=self._org))
         times = [r.values.get("_time") for t in tables for r in t.records]
         return [as_utc(t) for t in times if isinstance(t, datetime)]
@@ -213,7 +218,8 @@ class InfluxDBClientV2(InfluxDBClientBase):
         """Number of samples per UTC day (``time`` = day start, ``value`` = count),
         including days without data. Useful to detect gaps that were filled later."""
         bucket = self._require_bucket()
-        query = build_daily_count_query(bucket, measurement, field, start, end, tags)
+        absent = self._absent_tags(measurement, tags)
+        query = build_daily_count_query(bucket, measurement, field, start, end, tags, absent)
         return csv_to_frame(with_retry(lambda: self._query_csv(query)), output)
 
     def _query_csv(self, query: str) -> bytes:
@@ -226,6 +232,14 @@ class InfluxDBClientV2(InfluxDBClientBase):
         if isinstance(response, bytes):
             return response
         return response.data
+
+    def _absent_tags(self, measurement: str, tags: Optional[Dict[str, str]]) -> List[str]:
+        """Tag keys of the measurement that the requested series does not have
+        (cached per bucket and measurement)."""
+        key = (self._bucket, measurement)
+        if key not in self._tag_keys_cache:
+            self._tag_keys_cache[key] = with_retry(lambda: self.get_tags(measurement))
+        return [k for k in self._tag_keys_cache[key] if k not in (tags or {})]
 
     def _require_bucket(self) -> str:
         if not self._bucket:
@@ -280,11 +294,7 @@ class InfluxDBClientV2(InfluxDBClientBase):
         """Fallback when SHOW SERIES is unavailable: the distinct series that
         actually exist (Flux ``last()`` per series). Previously the cartesian
         product of all tag values was used, which reported non-existing series."""
-        previous, self._bucket = self._bucket, bucket
-        try:
-            series = self.discover_series(measurement=measurement)
-        finally:
-            self._bucket = previous
+        series = self.discover_series(measurement=measurement, bucket=bucket)
         rows: List[Dict[str, str]] = []
         seen = set()
         for info in series:

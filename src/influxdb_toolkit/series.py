@@ -87,12 +87,32 @@ def time_windows(
         lo = nxt
 
 
+_TRANSIENT_NAMES = {
+    "ConnectionError", "TimeoutError", "MaxRetryError", "NewConnectionError",
+    "ProtocolError", "ReadTimeoutError", "ConnectTimeoutError", "RemoteDisconnected",
+}
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Network problems, 5xx and 429 are worth retrying; other 4xx (e.g. a wrong
+    token or an unknown bucket) and query errors are not."""
+    status = getattr(exc, "status", None)
+    if isinstance(status, int):
+        return status >= 500 or status == 429
+    return any(cls.__name__ in _TRANSIENT_NAMES for cls in type(exc).__mro__)
+
+
 def with_retry(fn: Callable[[], T], retries: int = 3, backoff_s: float = 1.0) -> T:
-    """Call ``fn``; retry on any exception with exponential backoff."""
+    """Call ``fn``; retry transient errors (see :func:`is_transient`) with
+    exponential backoff. Other errors are raised at once as InfluxDBQueryError."""
     for attempt in range(retries + 1):
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 - network errors come in many types
+            if not is_transient(exc):
+                if isinstance(exc, InfluxDBQueryError):
+                    raise
+                raise InfluxDBQueryError(str(exc)) from exc
             if attempt == retries:
                 raise InfluxDBQueryError(f"Query failed after {retries + 1} attempts: {exc}") from exc
             wait = backoff_s * 2**attempt

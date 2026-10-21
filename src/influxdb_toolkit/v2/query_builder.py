@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 import re
 
 
@@ -85,13 +85,23 @@ def build_series_discovery_query(
     return "\n".join(query)
 
 
-def build_series_filter(measurement: str, field: str, tags: Optional[Dict[str, str]] = None) -> str:
+def build_series_filter(
+    measurement: str,
+    field: str,
+    tags: Optional[Dict[str, str]] = None,
+    absent_tags: Optional[Iterable[str]] = None,
+) -> str:
+    """Filter for exactly one series. ``absent_tags`` are tag keys the series does
+    not have; requiring their absence keeps series with additional tags (e.g.
+    ``room=1,sensor=x`` when asking for ``room=1``) out of the result."""
     conditions = [
         f'r._measurement == "{_escape_flux_string(measurement)}"',
         f'r._field == "{_escape_flux_string(field)}"',
     ]
     for k, v in sorted((tags or {}).items()):
         conditions.append(f'r["{_escape_flux_string(k)}"] == "{_escape_flux_string(v)}"')
+    for k in sorted(set(absent_tags or ()) - set(tags or {})):
+        conditions.append(f'not exists r["{_escape_flux_string(k)}"]')
     return f"  |> filter(fn: (r) => {' and '.join(conditions)})"
 
 
@@ -102,12 +112,13 @@ def build_series_range_query(
     start: datetime,
     end: datetime,
     tags: Optional[Dict[str, str]] = None,
+    absent_tags: Optional[Iterable[str]] = None,
 ) -> str:
     """Raw samples of one series in ``[start, end)`` as ``_time``/``_value``."""
     return "\n".join([
         f'from(bucket: "{_escape_flux_string(bucket)}")',
         f"  |> range(start: {fmt_time(start)}, stop: {fmt_time(end)})",
-        build_series_filter(measurement, field, tags),
+        build_series_filter(measurement, field, tags, absent_tags),
         '  |> keep(columns: ["_time", "_value"])',
     ])
 
@@ -118,6 +129,7 @@ def build_last_timestamp_query(
     field: str,
     tags: Optional[Dict[str, str]] = None,
     selector: str = "last",
+    absent_tags: Optional[Iterable[str]] = None,
 ) -> str:
     """Newest (``selector="last"``) or oldest (``"first"``) sample time."""
     if selector not in {"first", "last"}:
@@ -125,7 +137,7 @@ def build_last_timestamp_query(
     return "\n".join([
         f'from(bucket: "{_escape_flux_string(bucket)}")',
         "  |> range(start: 0)",
-        build_series_filter(measurement, field, tags),
+        build_series_filter(measurement, field, tags, absent_tags),
         f"  |> {selector}()",
         '  |> keep(columns: ["_time"])',
     ])
@@ -138,12 +150,13 @@ def build_daily_count_query(
     start: datetime,
     end: datetime,
     tags: Optional[Dict[str, str]] = None,
+    absent_tags: Optional[Iterable[str]] = None,
 ) -> str:
     """Samples per UTC day, including empty days (count 0) for gap detection."""
     return "\n".join([
         f'from(bucket: "{_escape_flux_string(bucket)}")',
         f"  |> range(start: {fmt_time(start)}, stop: {fmt_time(end)})",
-        build_series_filter(measurement, field, tags),
+        build_series_filter(measurement, field, tags, absent_tags),
         '  |> aggregateWindow(every: 1d, fn: count, createEmpty: true, timeSrc: "_start")',
         '  |> keep(columns: ["_time", "_value"])',
     ])
