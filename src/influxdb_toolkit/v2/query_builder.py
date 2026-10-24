@@ -80,7 +80,7 @@ def build_series_discovery_query(
         )
     query += [
         "  |> last()",
-        '  |> drop(columns: ["_start", "_stop", "_value"])',
+        '  |> drop(columns: ["_start", "_stop"])',  # _value tells the field type
     ]
     return "\n".join(query)
 

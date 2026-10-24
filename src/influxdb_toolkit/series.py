@@ -36,6 +36,7 @@ class SeriesInfo:
     tags: Dict[str, str] = field(default_factory=dict)
     first_time: Optional[datetime] = None
     last_time: Optional[datetime] = None
+    value_type: Optional[str] = None  # "number", "string" or "bool" (from the last value)
 
     @property
     def key(self) -> str:
@@ -65,6 +66,16 @@ def _escape(text: str) -> str:
 
 def _unescape(text: str) -> str:
     return text.replace("%3D", "=").replace("%2F", "/").replace("%25", "%")
+
+
+def value_type_of(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, (int, float)):
+        return "number"
+    return "string"
 
 
 def as_utc(value: datetime) -> datetime:

@@ -90,13 +90,15 @@ def test_discover_series_returns_existing_series_only():
     last = datetime(2025, 6, 1, 12, tzinfo=UTC)
     api = FakeQueryApi(tables=[
         table({"result": "_result", "table": 0, "_measurement": "temp", "_field": "value",
-               "room": "1", "_time": last}),
+               "room": "1", "_time": last, "_value": 21.5}),
         table({"result": "_result", "table": 1, "_measurement": "temp", "_field": "value",
-               "room": "2", "_time": last}),
+               "room": "2", "_time": last, "_value": "eui-a81758fffe0"}),
     ])
     series = make_client(api).discover_series()
     assert [s.key for s in series] == ["temp/room=1/value", "temp/room=2/value"]
     assert series[0].last_time == last
+    assert [s.value_type for s in series] == ["number", "string"]
+    assert "_value" not in series[0].tags
     assert "last()" in api.queries[0] and "range(start: 0)" in api.queries[0]
 
 

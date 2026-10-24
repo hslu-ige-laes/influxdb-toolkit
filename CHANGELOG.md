@@ -7,6 +7,7 @@
   (empty days reported as 0).
 - Series queries match exactly: series with additional tag keys are excluded
   (`not exists`), and only transient errors (network, 5xx, 429) are retried.
+- `discover_series()` reports the value type of each series (`number`, `string`, `bool`).
 - Added `SeriesInfo` with a readable, reversible series key.
 - Added optional `polars` extra.
 - Fixed: the v2 `get_series()` fallback no longer reports non-existing tag combinations

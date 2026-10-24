@@ -17,6 +17,7 @@ from ..series import (
     as_utc,
     csv_to_frame,
     time_windows,
+    value_type_of,
     with_retry,
 )
 from .query_builder import (
@@ -156,6 +157,7 @@ class InfluxDBClientV2(InfluxDBClientBase):
                         field=str(values["_field"]),
                         tags=tags,
                         last_time=as_utc(last) if isinstance(last, datetime) else None,
+                        value_type=value_type_of(values.get("_value")),
                     )
                 )
         return sorted(result, key=lambda s: s.key)
