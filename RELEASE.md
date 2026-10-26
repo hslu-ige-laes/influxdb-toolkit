@@ -56,7 +56,13 @@ py -m twine check --strict (Get-ChildItem dist\*).FullName
 
 ## One-time setup
 
-Publishing uses PyPI trusted publishing (OIDC), so no API tokens are stored in GitHub.
+The target is PyPI trusted publishing (OIDC), so no API tokens are stored in GitHub.
+
+**Current state (transitional):** the workflow still uploads with the API tokens in
+the repository secrets `PYPI_API_TOKEN` and `TEST_PYPI_API_TOKEN`. They belong to the
+account of the previous project owner. Configuring a trusted publisher requires the
+**Owner** role on PyPI; once that is available, complete the steps below and remove
+the `password:` lines from `.github/workflows/publish.yml`.
 
 1. On [pypi.org](https://pypi.org/manage/account/publishing/) (project
    `influxdb-toolkit` → **Settings** → **Publishing**, or as a pending publisher if the
@@ -69,5 +75,6 @@ Publishing uses PyPI trusted publishing (OIDC), so no API tokens are stored in G
    environment `testpypi`.
 3. In the GitHub repository → **Settings** → **Environments**, create `pypi` and
    `testpypi`. Optionally add required reviewers to `pypi` as a manual approval gate.
-4. The old `PYPI_API_TOKEN` / `TEST_PYPI_API_TOKEN` secrets are no longer used and can
-   be deleted (and the tokens revoked on PyPI).
+4. Remove the `password:` lines from `.github/workflows/publish.yml`, delete the
+   `PYPI_API_TOKEN` / `TEST_PYPI_API_TOKEN` secrets and revoke the tokens on PyPI.
+5. Make sure the project has at least two owners on PyPI.

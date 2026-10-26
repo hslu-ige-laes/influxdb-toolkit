@@ -61,6 +61,9 @@ jobs:
           path: dist/
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Transitional: remove once the trusted publisher is configured (see RELEASE.md).
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
   publish-testpypi:
     if: github.event_name == 'workflow_dispatch'
@@ -80,3 +83,5 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          # Transitional: remove once the trusted publisher is configured (see RELEASE.md).
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
