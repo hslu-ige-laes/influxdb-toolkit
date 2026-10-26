@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+
+## 0.2.0
 - Added series-level bulk access for v2: `discover_series()` (existing series incl. last
   timestamp via pushed-down `last()`), `iter_timeseries_chunks()` (time-windowed raw
   download with retry, pandas or polars output), `first_timestamp()`/`last_timestamp()` and `daily_counts()`
