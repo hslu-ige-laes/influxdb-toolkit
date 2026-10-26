@@ -15,6 +15,7 @@
 - Fixed: the v2 `get_series()` fallback no longer reports non-existing tag combinations
   (cartesian product); it now lists the series that actually exist.
 - `get_fields_per_series()` logs failed per-measurement queries instead of hiding them.
+- Fixed: importing the package failed on Python 3.10 and 3.11 (3.12-only f-string syntax).
 
 ## 0.1.0
 - Initial scaffold with v1/v2 abstraction, safe-by-default writes, and docs.
