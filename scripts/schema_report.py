@@ -9,12 +9,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import os
 import sys
 from typing import Iterable
 from urllib.parse import urlparse
+
+UTC = timezone.utc
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

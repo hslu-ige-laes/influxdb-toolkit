@@ -55,7 +55,8 @@ def _fmt_time(value: datetime) -> str:
 
 
 def _quote_identifier(value: str) -> str:
-    return f"\"{str(value).replace('\"', '\\\"')}\""
+    escaped = str(value).replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _escape_literal(value: str) -> str:

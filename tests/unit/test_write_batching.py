@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import pytest
@@ -8,6 +8,8 @@ import pytest
 from influxdb_toolkit.exceptions import UnsafeOperationError
 from influxdb_toolkit.v1.client import InfluxDBClientV1
 from influxdb_toolkit.v2.client import InfluxDBClientV2
+
+UTC = timezone.utc
 
 
 class FakeV1Client:

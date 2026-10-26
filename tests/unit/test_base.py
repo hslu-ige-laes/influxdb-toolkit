@@ -1,7 +1,9 @@
 import pandas as pd
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from influxdb_toolkit.base import InfluxDBClientBase
+
+UTC = timezone.utc
 
 
 class DummyClient(InfluxDBClientBase):

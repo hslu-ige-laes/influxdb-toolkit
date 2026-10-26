@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import timezone
 
 import pandas as pd
 import pytest
@@ -13,6 +13,8 @@ from influxdb_toolkit.v2.client import (
     _is_influxql,
     _normalize_flux_dataframe,
 )
+
+UTC = timezone.utc
 
 
 def test_v1_admin_operations_require_admin_permission() -> None:

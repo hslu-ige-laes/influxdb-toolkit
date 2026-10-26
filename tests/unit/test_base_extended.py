@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
 
 from influxdb_toolkit.base import InfluxDBClientBase
 from influxdb_toolkit.exceptions import UnsafeOperationError, UnsupportedOperationError
+
+UTC = timezone.utc
 
 
 class RichDummyClient(InfluxDBClientBase):

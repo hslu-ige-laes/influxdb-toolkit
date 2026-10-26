@@ -10,12 +10,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 import sys
 
 from influxdb_toolkit import InfluxDBClientFactory
 from influxdb_toolkit import list_profile_names, resolve_profile
+
+UTC = timezone.utc
 
 
 def _v1_config_from_env() -> dict:

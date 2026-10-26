@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import importlib.util
 from pathlib import Path
 
 import pandas as pd
 import pytest
+
+UTC = timezone.utc
 
 
 def _load_script(module_name: str, relative_path: str):
