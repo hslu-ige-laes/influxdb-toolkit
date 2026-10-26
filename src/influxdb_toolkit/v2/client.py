@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Dict, Iterable, List, Optional
+from datetime import datetime, timedelta
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 import logging
 import pandas as pd
 import requests
@@ -11,7 +11,22 @@ import requests
 from ..base import InfluxDBClientBase
 from ..exceptions import InfluxDBConnectionError, InfluxDBQueryError, UnsupportedOperationError
 from ..models import WriteResult
-from .query_builder import build_flux_query
+from ..series import (
+    OutputFormat,
+    SeriesInfo,
+    as_utc,
+    csv_to_frame,
+    time_windows,
+    value_type_of,
+    with_retry,
+)
+from .query_builder import (
+    build_daily_count_query,
+    build_flux_query,
+    build_last_timestamp_query,
+    build_series_discovery_query,
+    build_series_range_query,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +66,7 @@ class InfluxDBClientV2(InfluxDBClientBase):
         self._token = token
         self._org = org
         self._bucket = bucket
+        self._tag_keys_cache: Dict[tuple, List[str]] = {}
 
     def connect(self) -> None:
         try:
@@ -110,6 +126,128 @@ class InfluxDBClientV2(InfluxDBClientBase):
         df = _normalize_flux_dataframe(df, timezone)
         return df
 
+    # -------------------- Series-level bulk access --------------------
+
+    def discover_series(
+        self,
+        start: Optional[datetime] = None,
+        measurement: Optional[str] = None,
+        retries: int = 3,
+        bucket: Optional[str] = None,
+    ) -> List[SeriesInfo]:
+        """List every existing series (measurement, tag set, field) with its
+        last timestamp, sorted by key. ``start`` limits the search to series
+        with data since then (default: all time)."""
+        bucket = bucket or self._require_bucket()
+        query = build_series_discovery_query(bucket, start=start, measurement=measurement)
+        tables = with_retry(lambda: self._client.query_api().query(query, org=self._org), retries)
+        result: List[SeriesInfo] = []
+        for table in tables:
+            for record in table.records:
+                values: Dict[str, Any] = record.values
+                tags = {
+                    k: str(v)
+                    for k, v in values.items()
+                    if not k.startswith("_") and k not in {"result", "table"} and v is not None
+                }
+                last = values.get("_time")
+                result.append(
+                    SeriesInfo(
+                        measurement=str(values["_measurement"]),
+                        field=str(values["_field"]),
+                        tags=tags,
+                        last_time=as_utc(last) if isinstance(last, datetime) else None,
+                        value_type=value_type_of(values.get("_value")),
+                    )
+                )
+        return sorted(result, key=lambda s: s.key)
+
+    def iter_timeseries_chunks(
+        self,
+        measurement: str,
+        field: str,
+        start: datetime,
+        end: datetime,
+        tags: Optional[Dict[str, str]] = None,
+        chunk: timedelta = timedelta(days=30),
+        output: OutputFormat = "pandas",
+        retries: int = 3,
+    ) -> Iterator[Any]:
+        """Raw samples of one series in ``[start, end)``, one frame per time
+        window of ``chunk``. Frames have columns ``time`` (UTC) and ``value``
+        and are pandas or polars DataFrames depending on ``output``. Pass the
+        complete tag set of the series: series of the measurement with other or
+        additional tag keys are excluded."""
+        bucket = self._require_bucket()
+        absent = self._absent_tags(measurement, tags)
+        for lo, hi in time_windows(start, end, chunk):
+            query = build_series_range_query(bucket, measurement, field, lo, hi, tags, absent)
+            yield csv_to_frame(with_retry(lambda q=query: self._query_csv(q), retries), output)
+
+    def last_timestamp(
+        self, measurement: str, field: str, tags: Optional[Dict[str, str]] = None
+    ) -> Optional[datetime]:
+        """Timestamp of the newest sample of a series (UTC), ``None`` if empty."""
+        times = self._selector_times(measurement, field, tags, "last")
+        return max(times) if times else None
+
+    def first_timestamp(
+        self, measurement: str, field: str, tags: Optional[Dict[str, str]] = None
+    ) -> Optional[datetime]:
+        """Timestamp of the oldest sample of a series (UTC), ``None`` if empty."""
+        times = self._selector_times(measurement, field, tags, "first")
+        return min(times) if times else None
+
+    def _selector_times(
+        self, measurement: str, field: str, tags: Optional[Dict[str, str]], selector: str
+    ) -> List[datetime]:
+        bucket = self._require_bucket()
+        absent = self._absent_tags(measurement, tags)
+        query = build_last_timestamp_query(bucket, measurement, field, tags, selector, absent)
+        tables = with_retry(lambda: self._client.query_api().query(query, org=self._org))
+        times = [r.values.get("_time") for t in tables for r in t.records]
+        return [as_utc(t) for t in times if isinstance(t, datetime)]
+
+    def daily_counts(
+        self,
+        measurement: str,
+        field: str,
+        start: datetime,
+        end: datetime,
+        tags: Optional[Dict[str, str]] = None,
+        output: OutputFormat = "pandas",
+    ) -> Any:
+        """Number of samples per UTC day (``time`` = day start, ``value`` = count),
+        including days without data. Useful to detect gaps that were filled later."""
+        bucket = self._require_bucket()
+        absent = self._absent_tags(measurement, tags)
+        query = build_daily_count_query(bucket, measurement, field, start, end, tags, absent)
+        return csv_to_frame(with_retry(lambda: self._query_csv(query)), output)
+
+    def _query_csv(self, query: str) -> bytes:
+        from influxdb_client import Dialect
+
+        dialect = Dialect(header=True, delimiter=",", annotations=[], comment_prefix="#")
+        response = self._client.query_api().query_raw(query, org=self._org, dialect=dialect)
+        if isinstance(response, str):
+            return response.encode("utf-8")
+        if isinstance(response, bytes):
+            return response
+        return response.data
+
+    def _absent_tags(self, measurement: str, tags: Optional[Dict[str, str]]) -> List[str]:
+        """Tag keys of the measurement that the requested series does not have
+        (cached per bucket and measurement)."""
+        key = (self._bucket, measurement)
+        if key not in self._tag_keys_cache:
+            self._tag_keys_cache[key] = with_retry(lambda: self.get_tags(measurement))
+        return [k for k in self._tag_keys_cache[key] if k not in (tags or {})]
+
+    def _require_bucket(self) -> str:
+        if not self._bucket:
+            raise ValueError("bucket is required for v2 queries")
+        return self._bucket
+
     def query_raw(self, query: str, timezone: str = "UTC") -> pd.DataFrame:
         self._ensure_raw_query_allowed(query)
         if _is_influxql(query):
@@ -155,31 +293,21 @@ class InfluxDBClientV2(InfluxDBClientBase):
     def _get_series_via_tags(
         self, measurement: Optional[str], bucket: str
     ) -> pd.DataFrame:
-        """Fallback: build series from tag keys/values when SHOW SERIES is unavailable."""
-        measurements = [measurement] if measurement else self.list_measurements(database=bucket)
-        all_rows: List[Dict[str, str]] = []
-        for m in measurements:
-            tags = self.get_tags(m, database=bucket)
-            if not tags:
-                all_rows.append({"measurement": m})
+        """Fallback when SHOW SERIES is unavailable: the distinct series that
+        actually exist (Flux ``last()`` per series). Previously the cartesian
+        product of all tag values was used, which reported non-existing series."""
+        series = self.discover_series(measurement=measurement, bucket=bucket)
+        rows: List[Dict[str, str]] = []
+        seen = set()
+        for info in series:
+            identity = (info.measurement, tuple(sorted(info.tags.items())))
+            if identity in seen:
                 continue
-            # Get all tag values and build combinations
-            tag_values: Dict[str, List[str]] = {}
-            for t in tags:
-                tag_values[t] = self.get_tag_values(m, t, database=bucket)
-            # Build cartesian product of tag values
-            import itertools
-            keys = list(tag_values.keys())
-            value_lists = [tag_values[k] or [""] for k in keys]
-            for combo in itertools.product(*value_lists):
-                entry: Dict[str, str] = {"measurement": m}
-                for k, v in zip(keys, combo):
-                    if v:
-                        entry[k] = v
-                all_rows.append(entry)
-        if not all_rows:
+            seen.add(identity)
+            rows.append({"measurement": info.measurement, **info.tags})
+        if not rows:
             return pd.DataFrame(columns=["measurement"])
-        return pd.DataFrame(all_rows)
+        return pd.DataFrame(rows)
 
     def list_measurements(self, database: Optional[str] = None) -> List[str]:
         bucket = database or self._bucket
