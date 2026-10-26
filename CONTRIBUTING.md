@@ -6,7 +6,7 @@
 2. Install dev dependencies:
 
 ```bash
-pip install -e .[dev]
+pip install -e .[dev,polars]
 ```
 
 3. Run tests:
@@ -39,6 +39,5 @@ Use conventional-style prefixes where possible:
 
 ## Release Basics
 
-- Bump version in `pyproject.toml`.
-- Update `CHANGELOG.md`.
-- Build and run `twine check` before publishing.
+Releases are published to PyPI automatically when a GitHub release is created.
+See [RELEASE.md](RELEASE.md) for the full process.
