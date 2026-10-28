@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- `iter_timeseries_chunks()` / `csv_to_frame()` keep the texts of a string field
+  (`value` as text) instead of an all-null numeric column.
 
 ## 0.2.0
 - Added series-level bulk access for v2: `discover_series()` (existing series incl. last

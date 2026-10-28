@@ -225,3 +225,18 @@ def test_v1_reports_unsupported():
     with pytest.raises(UnsupportedOperationError):
         client.discover_series()
     assert isinstance(pd.DataFrame(), pd.DataFrame)
+
+
+def test_csv_to_frame_keeps_text_of_string_fields() -> None:
+    import polars as pl
+
+    text = b"_time,_value\n2025-01-01T00:00:00Z,eui-1\n2025-01-01T00:01:00Z,eui-2\n"
+    numbers = b"_time,_value\n2025-01-01T00:00:00Z,1.5\n2025-01-01T00:01:00Z,\n"
+    frame = csv_to_frame(text, "polars")
+    assert frame.schema["value"] == pl.String and frame["value"].to_list() == ["eui-1", "eui-2"]
+    frame = csv_to_frame(numbers, "polars")
+    assert frame.schema["value"] == pl.Float64 and frame["value"].to_list() == [1.5, None]
+    pdf = csv_to_frame(text, "pandas")
+    assert list(pdf["value"]) == ["eui-1", "eui-2"]
+    pdf = csv_to_frame(numbers, "pandas")
+    assert pdf["value"].dtype == "float64" and pdf["value"].iloc[0] == 1.5

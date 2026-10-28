@@ -142,20 +142,27 @@ def empty_frame(output: OutputFormat) -> Any:
 
 def csv_to_frame(data: bytes, output: OutputFormat) -> Any:
     """Convert annotation-free Flux CSV (columns ``_time``, ``_value``) to a
-    ``time``/``value`` frame with UTC timestamps."""
+    ``time``/``value`` frame with UTC timestamps. ``value`` is numeric; a string field
+    (texts that are not numbers, e.g. a gateway id) keeps its texts instead of
+    becoming all-null."""
     if not data.strip():
         return empty_frame(output)
     if output == "polars":
         pl = _polars()
         df = pl.read_csv(io.BytesIO(data), columns=["_time", "_value"], infer_schema_length=0)
+        raw = df.get_column("_value")
+        is_text = raw.cast(pl.Float64, strict=False).null_count() > raw.null_count()
+        value = pl.col("_value") if is_text else pl.col("_value").cast(pl.Float64, strict=False)
         return df.select(
             pl.col("_time").str.to_datetime(time_zone="UTC", time_unit="us").alias("time"),
-            pl.col("_value").cast(pl.Float64, strict=False).alias("value"),
+            value.alias("value"),
         )
     df = pd.read_csv(io.BytesIO(data), usecols=["_time", "_value"])
+    numeric = pd.to_numeric(df["_value"], errors="coerce")
+    is_text = numeric.isna().sum() > df["_value"].isna().sum()
     return pd.DataFrame({
         "time": pd.to_datetime(df["_time"], utc=True, format="ISO8601"),
-        "value": pd.to_numeric(df["_value"], errors="coerce"),
+        "value": df["_value"].astype("string") if is_text else numeric,
     })
 
 
