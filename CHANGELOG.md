@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+
+## 0.2.1
 - `iter_timeseries_chunks()` / `csv_to_frame()` keep the texts of a string field
   (`value` as text) instead of an all-null numeric column.
 

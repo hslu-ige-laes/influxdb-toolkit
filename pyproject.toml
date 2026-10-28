@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "influxdb-toolkit"
-version = "0.2.0"
+version = "0.2.1"
 description = "Unified Python API for InfluxDB v1 and v2 with extension points for v3."
 readme = "README.md"
 requires-python = ">=3.10"
